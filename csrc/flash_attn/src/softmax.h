@@ -132,9 +132,41 @@ struct Softmax {
     TensorT row_max, row_sum;
 
     __forceinline__ __device__ Softmax() {};
+    /*__forceinline__ __device__ Softmax() {
+        my_print_test();
+    }*/
+
+    __device__ void my_print_test() {
+        __shared__ int print_lock;
+        if (threadIdx.x == 0) print_lock = 0;
+        __syncthreads();
+        //if (thread0()) {
+        //    print(row_max);
+        //}
+        for (int i=0; i<30; i++) {
+            //if (thread(0, i * i)) {
+            if (thread(i * i, 0)) {
+                bool printed = false;
+                while (!printed) {
+                    if (atomicCAS(&print_lock, 0, 1) == 0) {
+                        print(row_max);
+                        printf("block %d thread %d\n", blockIdx.x, threadIdx.x);
+                        __threadfence();
+                        print_lock = 0;
+                        printed = true;
+                    }
+                    __nanosleep(100);
+                }
+            }
+        }
+    };
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
+        /*if (thread0()) {
+            print(acc_s);
+            print(acc_o);
+        }*/
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
