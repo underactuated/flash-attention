@@ -21,6 +21,9 @@
 #include "dropout.h"
 #include "rotary.h"
 
+#include <map>
+#include <any>
+
 namespace FLASH_NAMESPACE {
 
 using namespace cute;
@@ -231,6 +234,25 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
     // Repeat the partitioning with identity layouts
     Tensor tQcQ = gmem_thr_copy_QKV.partition_S(cQ);       // (ACPY,ACPY_M,ACPY_K) -> (blk_m,blk_k)
     Tensor tKVcKV = gmem_thr_copy_QKV.partition_S(cKV);   // (BCPY,BCPY_N,BCPY_K) -> (blk_n,blk_k)
+
+    //if (blockIdx.x == 0) printf("thread %d\n", tidx);
+    //if (thread0()) {
+    if (thread(10, 0)) {
+        print(cKV);
+        printf(" <- cKV\n");
+        print(tKVcKV);
+        printf(" <- tKVcKV\n");
+        print(cQ);
+        printf(" <- cQ\n");
+        print(tQcQ);
+        printf(" <- tQcQ\n");
+    }
+
+    // std::map<std::string, std::any> name_tensor = {{"cKV", cKV}, {"tKVcKV", tKVcKV}, {"cQ", cQ}, {"tQcQ", tQcQ}};
+    // for (auto item: name_tensor) {
+    //     print(item.second);
+    //     printf(" <- " + item.first + "\n");
+    // }
 
     // Allocate predicate tensors for k
     Tensor tQpQ = make_tensor<bool>(make_shape(size<2>(tQsQ)));
