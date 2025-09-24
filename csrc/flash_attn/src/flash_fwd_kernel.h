@@ -235,6 +235,7 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
     Tensor tQcQ = gmem_thr_copy_QKV.partition_S(cQ);       // (ACPY,ACPY_M,ACPY_K) -> (blk_m,blk_k)
     Tensor tKVcKV = gmem_thr_copy_QKV.partition_S(cKV);   // (BCPY,BCPY_N,BCPY_K) -> (blk_n,blk_k)
 
+    /*
     //if (blockIdx.x == 0) printf("thread %d\n", tidx);
     //if (thread0()) {
     if (thread(10, 0)) {
@@ -246,6 +247,36 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         printf(" <- cQ\n");
         print(tQcQ);
         printf(" <- tQcQ\n");
+    }*/
+
+    /*// Print from multiple threads to see the coordinate assignment
+    for (int i = 0; i < 32; ++i) {
+        if (threadIdx.x == i && blockIdx.x == 0) {
+            printf("Thread %d: ", i);
+            cute::print(tKVcKV);
+        }
+        __syncthreads();
+    }*/
+
+    if (thread0()) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
+
+    __shared__ int print_lock;
+    if (threadIdx.x == 0) print_lock = 0;
+    __syncthreads();
+    for (int i=0; i<32; i++) {
+        if (thread(i, 0)) {
+            bool printed = false;
+            while (!printed) {
+                if (atomicCAS(&print_lock, 0, 1) == 0) {
+                    print(tKVcKV);
+                    printf("block %d thread %d\n", blockIdx.x, threadIdx.x);
+                    __threadfence();
+                    print_lock = 0;
+                    printed = true;
+                }
+                __nanosleep(100);
+            }
+        }
     }
 
     // std::map<std::string, std::any> name_tensor = {{"cKV", cKV}, {"tKVcKV", tKVcKV}, {"cQ", cQ}, {"tQcQ", tQcQ}};
