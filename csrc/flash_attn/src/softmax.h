@@ -14,6 +14,8 @@
 #include "philox.cuh"
 #include "utils.h"
 
+#include "kernel_traits.h"
+
 namespace FLASH_NAMESPACE {
 
 using namespace cute;
@@ -125,6 +127,109 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/*template <typename Kernel_traits>
+struct StochSparse0 {
+    __host__ __device__ static auto get_tcaccs_impl() {
+        constexpr int kBlockM = Kernel_traits::kBlockM;
+        constexpr int kBlockN = Kernel_traits::kBlockN;
+        
+        #ifdef __CUDA_ARCH__
+        const int tidx = threadIdx.x;
+        #else
+        const int tidx = 0; // dummy for host compilation
+        #endif
+        
+        typename Kernel_traits::TiledMma tiled_mma;
+        auto thr_mma = tiled_mma.get_thread_slice(tidx);
+        auto caccs = make_identity_tensor(Shape<Int<kBlockM>, Int<kBlockN>>{});
+        return thr_mma.partition_C(caccs);
+    }
+    
+    decltype(get_tcaccs_impl()) tcaccs;
+    
+    __device__ StochSparse0() {
+        constexpr int kBlockM = Kernel_traits::kBlockM;
+        constexpr int kBlockN = Kernel_traits::kBlockN;
+        if (thread0()) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
+        tcaccs = get_tcaccs_impl();
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////*/
+
+template <typename Kernel_traits>
+struct StochSparse {
+private:
+
+    __host__ __device__ static auto get_tcaccs() {
+        constexpr int kBlockM = Kernel_traits::kBlockM;
+        constexpr int kBlockN = Kernel_traits::kBlockN;
+        const int tidx = threadIdx.x;
+        typename Kernel_traits::TiledMma tiled_mma;
+        auto thr_mma = tiled_mma.get_thread_slice(tidx);
+        Tensor caccs = make_identity_tensor(Shape<Int<kBlockM>, Int<kBlockN>>{});    // (BLK_M,BLK_N) -> (blk_m,blk_n)
+        return thr_mma.partition_C(caccs);
+    };
+
+public:
+
+    decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
+
+    __device__ StochSparse() {
+        constexpr int kBlockM = Kernel_traits::kBlockM;
+        constexpr int kBlockN = Kernel_traits::kBlockN;
+        if (thread0()) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
+        tcaccs = get_tcaccs();
+    };
+
+    template<typename Tensor0>
+    __device__ void original_coordinates(Tensor0 acc_s) {
+        if (thread0()) {
+        //if (thread(0, 1)) {
+            print(acc_s);
+            printf("\n");
+            print(tcaccs);
+            printf("\n");
+            
+            //auto l = FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout());
+            auto l1 = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+
+            /*int count = 0, max_elements = 20;
+            for (int i = 0; i < size(acc_s) && count < max_elements; ++i) {
+                printf("[%d] = %f\n", i, float(acc_s(i)));
+                //printf("[%d]: %f, %f\n", i, float(acc_s(i)), float(tcaccs));
+                count++;
+            }*/
+
+            printf("size = %d\n", (int)size(acc_s));
+
+            //for (int i = 0; i < 20; ++i) {
+            for (int i = 0; i < size(acc_s); ++i) {
+                auto coord = tcaccs(i);  // Get global coordinate
+                auto value = acc_s(i);    // Get corresponding data value
+                //print(rank(coord));
+                printf("[%d] Global coord ", i);
+                print(coord);
+                auto coord1 = l1(i); printf(" coord1 "); print(coord1);
+                printf(" -> value: %f\n", (float)value);
+                //printf("Global coord (%d,%d) -> value: %f\n", get<0>(coord), get<1>(coord), (float)value);
+            }
+        }
+        
+        /*if (thread0()) {
+            for(int mi = 0; mi < size<0>(acc_s); ++mi) {
+                for(int ni = 0; ni < size<1>(acc_s); ++ni) {
+                    printf(" %d", acc_s(mi, ni));
+                }
+                printf("\n");
+            }
+        }*/
+    };
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 template <int kNRows>
 struct Softmax {
 
@@ -136,7 +241,7 @@ struct Softmax {
         my_print_test();
     }*/
 
-    __device__ void my_print_test() {
+    /*__device__ void my_print_test() {
         __shared__ int print_lock;
         if (threadIdx.x == 0) print_lock = 0;
         __syncthreads();
@@ -159,14 +264,10 @@ struct Softmax {
                 }
             }
         }
-    };
+    };*/
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
-        /*if (thread0()) {
-            print(acc_s);
-            print(acc_o);
-        }*/
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
@@ -217,5 +318,56 @@ struct Softmax {
         return lse;
     };
 };
+
+template <int kNRows, typename Kernel_traits>
+struct Softmax_c : public Softmax<kNRows> {
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_max, row_sum;
+
+    StochSparse<Kernel_traits> ss;
+
+    __device__ Softmax_c() {};
+
+    template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
+    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
+        /*if (thread0()) {
+            print(acc_s);
+            print(acc_o);
+        }*/
+        // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
+        Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
+        static_assert(decltype(size<0>(scores))::value == kNRows);
+        if (Is_first) {
+            FLASH_NAMESPACE::template reduce_max</*zero_init=*/true>(scores, row_max);
+            FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
+            FLASH_NAMESPACE::reduce_sum</*zero_init=*/true>(scores, row_sum);
+        } else {
+            Tensor scores_max_prev = make_fragment_like(row_max);
+            cute::copy(row_max, scores_max_prev);
+            FLASH_NAMESPACE::template reduce_max</*zero_init=*/false>(scores, row_max);
+            // Reshape acc_o from (MMA=4, MMA_M, MMA_K) to (nrow=(2, MMA_M), ncol=(2, MMA_K))
+            Tensor acc_o_rowcol = make_tensor(acc_o.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_o.layout()));
+            //if (thread(0, 1)) {printf("acc_o_rowcol:"); print(acc_o_rowcol); printf("\n"); printf("acc_o:"); print(acc_o); printf("\n");}
+            static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
+            #pragma unroll
+            for (int mi = 0; mi < size(row_max); ++mi) {
+                float scores_max_cur = !Check_inf
+                    ? row_max(mi)
+                    : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
+                float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
+                row_sum(mi) *= scores_scale;
+                #pragma unroll
+                for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scores_scale; }
+            }
+            FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
+            // We don't do the reduce across threads here since we don't need to use the row_sum.
+            // We do that reduce at the end when we need to normalize the softmax.
+            FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
+        }
+        ss.original_coordinates(acc_s);
+    };
+
+}; 
 
 }  // namespace FLASH_NAMESPACE

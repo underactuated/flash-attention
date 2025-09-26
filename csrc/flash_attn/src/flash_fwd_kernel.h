@@ -258,6 +258,7 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         __syncthreads();
     }*/
 
+    /*
     if (thread0()) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
 
     __shared__ int print_lock;
@@ -277,7 +278,7 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
                 __nanosleep(100);
             }
         }
-    }
+    }*/
 
     // std::map<std::string, std::any> name_tensor = {{"cKV", cKV}, {"tKVcKV", tKVcKV}, {"cQ", cQ}, {"tQcQ", tQcQ}};
     // for (auto item: name_tensor) {
@@ -335,7 +336,8 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
 
     clear(acc_o);
 
-    FLASH_NAMESPACE::Softmax<2 * size<1>(acc_o)> softmax;
+    //FLASH_NAMESPACE::Softmax<2 * size<1>(acc_o)> softmax;
+    FLASH_NAMESPACE::Softmax_c<2 * size<1>(acc_o), Kernel_traits> softmax;
 
     const float alibi_slope = !Has_alibi || params.alibi_slopes_ptr == nullptr ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
     FLASH_NAMESPACE::Mask<Is_causal, Is_local, Has_alibi> mask(binfo.actual_seqlen_k, binfo.actual_seqlen_q, params.window_size_left, params.window_size_right, alibi_slope);
