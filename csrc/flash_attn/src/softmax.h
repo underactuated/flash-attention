@@ -157,13 +157,29 @@ struct StochSparse0 {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////*/
 
+struct SSWeight {
+    float score;
+    float log_rand; // log of random float from [0, 1]
+    char row;
+    int col;
+
+    //__device__ SSWeight (float score_, float log_rand_, char row_, int col_) : score(score_), log_rand(log_rand_), row(row_), col(col_) {};
+};
+
 template <typename Kernel_traits>
 struct StochSparse {
+
+    static constexpr int kBlockM = Kernel_traits::kBlockM;
+    static constexpr int kBlockN = Kernel_traits::kBlockN;
+
+    SSWeight ssweights [2 * kBlockN];
+    int ssw_count = 0;
+
 private:
 
     __host__ __device__ static auto get_tcaccs() {
-        constexpr int kBlockM = Kernel_traits::kBlockM;
-        constexpr int kBlockN = Kernel_traits::kBlockN;
+        // constexpr int kBlockM = Kernel_traits::kBlockM;
+        // constexpr int kBlockN = Kernel_traits::kBlockN;
         const int tidx = threadIdx.x;
         typename Kernel_traits::TiledMma tiled_mma;
         auto thr_mma = tiled_mma.get_thread_slice(tidx);
@@ -183,16 +199,20 @@ public:
     };
 
     template<typename Tensor0>
-    __device__ void original_coordinates(Tensor0 acc_s) {
+    __device__ void original_coordinates(Tensor0 &acc_s) { // todo: replace acc_s with scores
         if (thread0()) {
         //if (thread(0, 1)) {
             print(acc_s);
-            printf("\n");
+            printf(" <-- acc_s\n");
             print(tcaccs);
-            printf("\n");
+            printf(" <-- tcaccs\n");
             
-            //auto l = FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout());
-            auto l1 = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+            auto accs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout());
+            print(accs_lo);
+            printf(" <-- accs_lo\n");
+            auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+            print(tcaccs_lo);
+            printf(" <-- tcaccs_lo\n");
 
             /*int count = 0, max_elements = 20;
             for (int i = 0; i < size(acc_s) && count < max_elements; ++i) {
@@ -205,12 +225,16 @@ public:
 
             //for (int i = 0; i < 20; ++i) {
             for (int i = 0; i < size(acc_s); ++i) {
-                auto coord = tcaccs(i);  // Get global coordinate
+                auto coord = tcaccs(i);  // Get global coordinate upd: incorrect, use coord5
                 auto value = acc_s(i);    // Get corresponding data value
                 //print(rank(coord));
                 printf("[%d] Global coord ", i);
                 print(coord);
-                auto coord1 = l1(i); printf(" coord1 "); print(coord1);
+                auto coord1 = tcaccs_lo(i); printf(" coord1 "); print(coord1);
+                //auto coord2 = accs_lo(i); printf(" coord2 "); print(coord2);
+                auto coord3 = idx2crd(i, accs_lo.shape()); printf(" coord3 "); print(coord3);
+                //auto coord4 = accs_lo(i%4, i/4); printf(" coord4 "); print(coord4);
+                auto coord5 = tcaccs_lo(i%4, i/4); printf(" coord5 "); print(coord5); // correct global coordinates
                 printf(" -> value: %f\n", (float)value);
                 //printf("Global coord (%d,%d) -> value: %f\n", get<0>(coord), get<1>(coord), (float)value);
             }
@@ -224,6 +248,41 @@ public:
                 printf("\n");
             }
         }*/
+    };
+
+    template <typename Tensor0, typename Tensor1>
+    __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            //float scores_max_cur = !Check_inf
+            //    ? row_max(mi)
+            //    : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
+            //float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
+            //row_sum(mi) *= scores_scale;
+            //#pragma unroll
+            
+            for (int ni = 0; ni < size<1>(scores); ++ni) {
+                //printf("mi = %d, ni = %d\n", mi, ni);
+                if (ssw_count < 2 * kBlockN) {
+                    //float score = scores(mi, ni);
+                    float score = scores(mi, ni);
+                    score = score == 0? -INFINITY : logf(scores(mi, ni)) + row_max(mi);
+                    float r = .5;
+                    //float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX); // to improve later
+                    float log_rand = logf(r);
+                    //float log_rand = -.5;
+                    char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+                    auto coord = tcaccs_lo(mi, ni);
+                    int col = get<1>(coord);
+                    if (thread0()) {
+                        printf("score = %f, log_rand = %f, row = %d, col = %d\n", score, log_rand, row, col);
+                    }
+                    //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
+                    ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                    //SSWeight ssw;
+                }
+            }
+        }
     };
 
 };
@@ -366,6 +425,7 @@ struct Softmax_c : public Softmax<kNRows> {
             FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
         }
         ss.original_coordinates(acc_s);
+        ss.store_ssweights(scores, row_max, row_sum);
     };
 
 }; 
