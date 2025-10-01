@@ -11,10 +11,11 @@
 #include <cutlass/numeric_types.h>
 
 #include "namespace_config.h"
-#include "philox.cuh"
+//#include "philox.cuh"
 #include "utils.h"
 
 #include "kernel_traits.h"
+#include "curand_kernel.h"
 
 namespace FLASH_NAMESPACE {
 
@@ -157,6 +158,8 @@ struct StochSparse0 {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////*/
 
+#define PRINT_BID 1
+
 struct SSWeight {
     float score;
     float log_rand; // log of random float from [0, 1]
@@ -174,6 +177,8 @@ struct StochSparse {
 
     SSWeight ssweights [2 * kBlockN];
     int ssw_count = 0;
+
+    curandState local_state;
 
 private:
 
@@ -194,13 +199,15 @@ public:
     __device__ StochSparse() {
         constexpr int kBlockM = Kernel_traits::kBlockM;
         constexpr int kBlockN = Kernel_traits::kBlockN;
-        if (thread0()) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
+        if (thread(0, PRINT_BID)) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
         tcaccs = get_tcaccs();
+        int seed = 0;
+        curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
     };
 
     template<typename Tensor0>
     __device__ void original_coordinates(Tensor0 &acc_s) { // todo: replace acc_s with scores
-        if (thread0()) {
+        if (thread(0, PRINT_BID)) {
         //if (thread(0, 1)) {
             print(acc_s);
             printf(" <-- acc_s\n");
@@ -263,26 +270,29 @@ public:
             
             for (int ni = 0; ni < size<1>(scores); ++ni) {
                 //printf("mi = %d, ni = %d\n", mi, ni);
-                if (ssw_count < 2 * kBlockN) {
-                    //float score = scores(mi, ni);
-                    float score = scores(mi, ni);
-                    score = score == 0? -INFINITY : logf(scores(mi, ni)) + row_max(mi);
-                    float r = .5;
-                    //float r = static_cast<float>(rand()) / static_cast<float>(RAND_MAX); // to improve later
-                    float log_rand = logf(r);
-                    //float log_rand = -.5;
-                    char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                    auto coord = tcaccs_lo(mi, ni);
-                    int col = get<1>(coord);
-                    if (thread0()) {
-                        printf("score = %f, log_rand = %f, row = %d, col = %d\n", score, log_rand, row, col);
-                    }
-                    //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
-                    ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-                    //SSWeight ssw;
+                //if (ssw_count < 2 * kBlockN) {
+                if (ssw_count == 2 * kBlockN) continue;
+                //float score = scores(mi, ni);
+                float score = scores(mi, ni);
+                score = score == 0 ? -INFINITY : logf(scores(mi, ni)) + row_max(mi);
+                //float rand_val = .5;
+                float rand_val = curand_uniform(&local_state);
+                float log_rand = logf(rand_val);
+                //float log_rand = -.5;
+                char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+                auto coord = tcaccs_lo(mi, ni);
+                int col = get<1>(coord);
+                //if (thread0()) {
+                if (thread(0, PRINT_BID)) {
+                    printf("score = %f, log_rand = %f, row = %d, col = %d\n", score, log_rand, row, col);
                 }
+                //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
+                ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                //SSWeight ssw;
+                //}
             }
         }
+        if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
     };
 
 };
