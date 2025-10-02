@@ -180,6 +180,8 @@ struct SSWeight {
 template <typename Kernel_traits>
 struct StochSparse {
 
+    float c = 10;
+
     static constexpr int kBlockM = Kernel_traits::kBlockM;
     static constexpr int kBlockN = Kernel_traits::kBlockN;
 
@@ -271,8 +273,19 @@ public:
 
     template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
-        float c = 10;
+        //float c = 10;
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+        #if 1
+        float s = 0;
+        if (thread(0, PRINT_BID)) {
+            for (int mi = 0; mi < 4; ++mi) {
+                printf("row_sum(%d) = %f\n", mi, row_sum(mi));
+                s += row_sum(mi);
+            }
+            printf("s = %f\n", s);
+            //for (int mi = 0; mi < 4; ++mi) printf("row_sum(%d) = %f\n", mi, row_sum(mi) * exp(row_max(mi)));
+        }
+        #endif
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             //float scores_max_cur = !Check_inf
             //    ? row_max(mi)
@@ -284,7 +297,7 @@ public:
             float row_max_mi = row_max(mi);
             float row_sum_mi = row_sum(mi);
             // later, osorb c in row_sum_mi
-            if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
+            //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
             
             for (int ni = 0; ni < size<1>(scores); ++ni) {
                 //printf("mi = %d, ni = %d\n", mi, ni);
@@ -316,6 +329,31 @@ public:
             }
         }
         if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+    };
+
+    template <typename Tensor1>
+    __device__ void filter_ssweights (Tensor1 &row_max, Tensor1 &row_sum) {
+        // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
+        // log_c + log_score - log_row_sum - row_max vs log_rand, or
+        // log_score - log_rand vs log_row_sum + row_max - log_c
+        float log_c = logf(c);
+        Tensor1 row_sum_tot, del_log;
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        for (int i = 0; i < size<0>(del_log); ++i) {
+            //del_log(i) = logf(row_sum(i)) + row_max(i) - log_c;
+            del_log(i) = logf(row_sum_tot(i)) + row_max(i) - log_c;
+        }
+        int i = 0;
+        for (int j = 0; j < ssw_count; ++j) {
+            auto ssw = ssweights[j];
+            // if weight should be skipped, continue
+            if (ssw.score - ssw.log_rand < del_log(ssw.row)) continue;
+            if (i < j) ssweights[i] = ssweights[j];
+            i++;
+        }
+        if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
+        ssw_count = i;
     };
 
 };
@@ -433,8 +471,8 @@ struct Softmax_c : public Softmax<kNRows> {
         if (Is_first) {
             FLASH_NAMESPACE::template reduce_max</*zero_init=*/true>(scores, row_max);
             FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
-            //FLASH_NAMESPACE::reduce_sum</*zero_init=*/true>(scores, row_sum);
-            FLASH_NAMESPACE::reduce_sum_</*zero_init=*/true>(scores, row_sum);
+            FLASH_NAMESPACE::reduce_sum</*zero_init=*/true>(scores, row_sum);
+            //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/true>(scores, row_sum);
         } else {
             Tensor scores_max_prev = make_fragment_like(row_max);
             cute::copy(row_max, scores_max_prev);
@@ -456,11 +494,12 @@ struct Softmax_c : public Softmax<kNRows> {
             FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
             // We don't do the reduce across threads here since we don't need to use the row_sum.
             // We do that reduce at the end when we need to normalize the softmax.
-            //FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
-            FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
+            FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
+            //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
         }
         ss.original_coordinates(acc_s);
         ss.store_ssweights(scores, row_max, row_sum);
+        ss.filter_ssweights(row_max, row_sum);
     };
 
 }; 
