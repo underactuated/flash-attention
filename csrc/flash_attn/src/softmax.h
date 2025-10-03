@@ -65,14 +65,6 @@ __device__ __forceinline__ void reduce_sum(Tensor<Engine0, Layout0> const& tenso
     thread_reduce_<zero_init>(tensor, sum, sum_op);
 }
 
-template<bool zero_init=true, typename Engine0, typename Layout0, typename Engine1, typename Layout1>
-__device__ __forceinline__ void reduce_sum_(Tensor<Engine0, Layout0> const& tensor, Tensor<Engine1, Layout1> &sum){
-    // reduce_sum_ includes allreduce, unlike reduce_sum
-    SumOp<float> sum_op;
-    //thread_reduce_<zero_init>(tensor, sum, sum_op);
-    reduce_<zero_init>(tensor, sum, sum_op);
-}
-
 // Apply the exp to all the elements.
 template <bool Scale_max=true, typename Engine0, typename Layout0, typename Engine1, typename Layout1>
 __forceinline__ __device__ void scale_apply_exp2(Tensor<Engine0, Layout0> &tensor, Tensor<Engine1, Layout1> const &max, const float scale) {
@@ -136,37 +128,8 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*template <typename Kernel_traits>
-struct StochSparse0 {
-    __host__ __device__ static auto get_tcaccs_impl() {
-        constexpr int kBlockM = Kernel_traits::kBlockM;
-        constexpr int kBlockN = Kernel_traits::kBlockN;
-        
-        #ifdef __CUDA_ARCH__
-        const int tidx = threadIdx.x;
-        #else
-        const int tidx = 0; // dummy for host compilation
-        #endif
-        
-        typename Kernel_traits::TiledMma tiled_mma;
-        auto thr_mma = tiled_mma.get_thread_slice(tidx);
-        auto caccs = make_identity_tensor(Shape<Int<kBlockM>, Int<kBlockN>>{});
-        return thr_mma.partition_C(caccs);
-    }
-    
-    decltype(get_tcaccs_impl()) tcaccs;
-    
-    __device__ StochSparse0() {
-        constexpr int kBlockM = Kernel_traits::kBlockM;
-        constexpr int kBlockN = Kernel_traits::kBlockN;
-        if (thread0()) print("kBlockM = %d, kBlockN = %d\n", kBlockM, kBlockN);
-        tcaccs = get_tcaccs_impl();
-    }
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////*/
-
 #define PRINT_BID 3 //1
+#define VERBAL 0 //1
 
 struct SSWeight {
     float score;
@@ -177,10 +140,13 @@ struct SSWeight {
     //__device__ SSWeight (float score_, float log_rand_, char row_, int col_) : score(score_), log_rand(log_rand_), row(row_), col(col_) {};
 };
 
-template <typename Kernel_traits>
+template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    float c = 10;
+    float c = 10; //1e-30; //10;
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_sum_tot;
 
     static constexpr int kBlockM = Kernel_traits::kBlockM;
     static constexpr int kBlockN = Kernel_traits::kBlockN;
@@ -273,18 +239,22 @@ public:
 
     template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
         //float c = 10;
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
         #if 1
-        float s = 0;
+        #if VERBAL
         if (thread(0, PRINT_BID)) {
+            float s = 0;
             for (int mi = 0; mi < 4; ++mi) {
-                printf("row_sum(%d) = %f\n", mi, row_sum(mi));
-                s += row_sum(mi);
+                printf("row_sum_tot(%d) = %f\n", mi, row_sum_tot(mi));
+                s += row_sum_tot(mi);
             }
             printf("s = %f\n", s);
             //for (int mi = 0; mi < 4; ++mi) printf("row_sum(%d) = %f\n", mi, row_sum(mi) * exp(row_max(mi)));
         }
+        #endif
         #endif
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             //float scores_max_cur = !Check_inf
@@ -295,40 +265,39 @@ public:
             //#pragma unroll
 
             float row_max_mi = row_max(mi);
-            float row_sum_mi = row_sum(mi);
+            float row_sum_tot_mi = row_sum_tot(mi);
+            //float row_sum_mi = row_sum(mi);
             // later, osorb c in row_sum_mi
             //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
             
             for (int ni = 0; ni < size<1>(scores); ++ni) {
                 //printf("mi = %d, ni = %d\n", mi, ni);
-                //if (ssw_count < 2 * kBlockN) {
                 if (ssw_count == 2 * kBlockN) continue;
                 //float score = scores(mi, ni);
+                //if (ssw_count > 0) continue; // experimental
                 float score = scores(mi, ni);
                 float rand_val = curand_uniform(&local_state);
+                //float rand_val = score * score + .1; // was to test curand time 
                 //if (score <= row_sum_mi * rand_val) continue;
-                if (score * c <= row_sum_mi * rand_val) continue;
+                if (score * c <= row_sum_tot_mi * rand_val) continue;
+                //if (score == 0) continue; // experim
                 score = logf(score) + row_max_mi;
                 float log_rand = logf(rand_val);
-                //score = score == 0 ? -INFINITY : logf(scores(mi, ni)) + row_max_mi; //row_max(mi);
-                //float rand_val = .5;
-                //float rand_val = curand_uniform(&local_state);
-                //float log_rand = logf(rand_val);
-                //float log_rand = -.5;
                 char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
                 auto coord = tcaccs_lo(mi, ni);
                 int col = get<1>(coord);
-                //if (thread0()) {
+                #if VERBAL
                 if (thread(0, PRINT_BID)) {
                     printf("score = %f, log_rand = %f, row = %d, col = %d\n", score, log_rand, row, col);
                 }
+                #endif
                 //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
                 ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-                //SSWeight ssw;
-                //}
             }
         }
+        #if VERBAL
         if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+        #endif
     };
 
     template <typename Tensor1>
@@ -337,9 +306,7 @@ public:
         // log_c + log_score - log_row_sum - row_max vs log_rand, or
         // log_score - log_rand vs log_row_sum + row_max - log_c
         float log_c = logf(c);
-        Tensor1 row_sum_tot, del_log;
-        SumOp<float> sum_op;
-        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        Tensor1 del_log;
         for (int i = 0; i < size<0>(del_log); ++i) {
             //del_log(i) = logf(row_sum(i)) + row_max(i) - log_c;
             del_log(i) = logf(row_sum_tot(i)) + row_max(i) - log_c;
@@ -352,7 +319,9 @@ public:
             if (i < j) ssweights[i] = ssweights[j];
             i++;
         }
+        #if 1
         if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
+        #endif
         ssw_count = i;
     };
 
@@ -449,22 +418,20 @@ struct Softmax {
     };
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 template <int kNRows, typename Kernel_traits>
 struct Softmax_c : public Softmax<kNRows> {
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
-    StochSparse<Kernel_traits> ss;
+    StochSparse<kNRows, Kernel_traits> ss;
 
     __device__ Softmax_c() {};
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
-        /*if (thread0()) {
-            print(acc_s);
-            print(acc_o);
-        }*/
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
@@ -497,10 +464,32 @@ struct Softmax_c : public Softmax<kNRows> {
             FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
             //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
         }
+        ///*
         ss.original_coordinates(acc_s);
         ss.store_ssweights(scores, row_max, row_sum);
         ss.filter_ssweights(row_max, row_sum);
+        //*/
     };
+
+    /*template<bool Is_dropout=false, bool Split=false, typename Tensor0>
+    __forceinline__ __device__ TensorT normalize_softmax_lse(Tensor0 &acc_o, float softmax_scale, float rp_dropout=1.0) {
+        //ss.filter_ssweights(row_max, row_sum);
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum, row_sum, sum_op);
+        TensorT lse = make_fragment_like(row_sum);
+        Tensor acc_o_rowcol = make_tensor(acc_o.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_o.layout()));
+        static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(acc_o_rowcol); ++mi) {
+            float sum = row_sum(mi);
+            float inv_sum = (sum == 0.f || sum != sum) ? 1.f : 1.f / sum;
+            lse(mi) = (sum == 0.f || sum != sum) ? (Split ? -INFINITY : INFINITY) : row_max(mi) * softmax_scale + __logf(sum);
+            float scale = !Is_dropout ? inv_sum : inv_sum * rp_dropout;
+            #pragma unroll
+            for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scale; }
+        }
+        return lse;
+    };*/
 
 }; 
 
