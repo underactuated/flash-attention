@@ -131,6 +131,8 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 #define PRINT_BID 3 //1
 #define VERBAL 0 //1
 
+//#define ssw_size 20
+
 struct SSWeight {
     float score;
     float log_rand; // log of random float from [0, 1]
@@ -152,6 +154,7 @@ struct StochSparse {
     static constexpr int kBlockN = Kernel_traits::kBlockN;
 
     SSWeight ssweights [2 * kBlockN];
+    //SSWeight ssweights [ssw_size];
     int ssw_count = 0;
 
     curandState local_state;
@@ -269,13 +272,14 @@ public:
             //float row_sum_mi = row_sum(mi);
             // later, osorb c in row_sum_mi
             //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
-            
+
             for (int ni = 0; ni < size<1>(scores); ++ni) {
                 //printf("mi = %d, ni = %d\n", mi, ni);
                 if (ssw_count == 2 * kBlockN) continue;
                 //float score = scores(mi, ni);
                 //if (ssw_count > 0) continue; // experimental
                 float score = scores(mi, ni);
+                //float score = 0.0001; //1./(512 * 32); // experim
                 float rand_val = curand_uniform(&local_state);
                 //float rand_val = score * score + .1; // was to test curand time 
                 //if (score <= row_sum_mi * rand_val) continue;
@@ -294,10 +298,53 @@ public:
                 //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
                 ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
             }
+            
+            #if 0
+            // experimental block
+            // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
+            // not by scores(mi,ni) or conditional
+            float p = 0;
+            for (int ni = 0; ni < size<1>(scores); ++ni) {
+                //printf("mi = %d, ni = %d\n", mi, ni);
+                if (ssw_count == 2 * kBlockN) continue;
+                //if (ssw_count == ssw_size) continue;
+                float score = scores(mi, ni);
+
+                //score = logf(score) + row_max_mi;
+                float rand_val1 = curand_uniform(&local_state);
+                //float rand_val1 = .5;
+                //float log_rand1 = logf(rand_val1);
+                score += rand_val1;
+                //score += logf(score);
+                p += score; continue;
+
+                /*score = logf(score) + row_max_mi;
+                float rand_val1 = curand_uniform(&local_state);
+                float log_rand1 = logf(rand_val1);
+                score += log_rand1;
+                p += score; continue;*/
+                
+                float rand_val = curand_uniform(&local_state);
+                if (score * c <= row_sum_tot_mi * rand_val) continue;
+                int dcount = 1;
+                //int dcount = !(score * c <= row_sum_tot_mi * rand_val);
+                score = logf(score) + row_max_mi;
+                float log_rand = logf(rand_val);
+                p += score; continue; // experim
+                char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+                auto coord = tcaccs_lo(mi, ni);
+                int col = get<1>(coord);
+                //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
+                ssweights[ssw_count] = SSWeight{score, log_rand, row, col};
+                ssw_count += dcount;
+            }
+            ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
+            #endif
         }
         #if VERBAL
         if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
         #endif
+        //if (thread(0, PRINT_BID)) printf("last ssweight = %f\n", ssweights[ssw_count-1].score);
     };
 
     template <typename Tensor1>
@@ -466,8 +513,11 @@ struct Softmax_c : public Softmax<kNRows> {
         }
         ///*
         ss.original_coordinates(acc_s);
+        //__syncthreads();
         ss.store_ssweights(scores, row_max, row_sum);
+        //__syncthreads();
         ss.filter_ssweights(row_max, row_sum);
+        //__syncthreads();
         //*/
     };
 
