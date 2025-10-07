@@ -17,6 +17,10 @@
 #include "kernel_traits.h"
 #include "curand_kernel.h"
 
+//#include <cstdio> // For printf
+//#include <iostream> // For std::cout (optional, can use printf for messages)
+#include <limits>
+
 namespace FLASH_NAMESPACE {
 
 using namespace cute;
@@ -141,6 +145,32 @@ struct SSWeight {
 
     //__device__ SSWeight (float score_, float log_rand_, char row_, int col_) : score(score_), log_rand(log_rand_), row(row_), col(col_) {};
 };
+
+/*__device__ __forceinline__ void printFloatBits(float f) {
+    // Reinterpret the float as an unsigned int
+    unsigned int u = *reinterpret_cast<unsigned int*>(&f);
+
+    // Determine the number of bits in an unsigned int (typically 32)
+    int numBits = std::numeric_limits<unsigned int>::digits; 
+
+    // Print the bits from most significant to least significant
+    for (int i = numBits - 1; i >= 0; --i) {
+        // Check if the i-th bit is set
+        if ((u >> i) & 1) {
+            printf("1");
+        } else {
+            printf("0");
+        }
+    }
+    printf("\n"); // Newline after printing all bits
+}*/
+
+__device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
+  int z = 1 << k;
+  int m = z - 1;
+  const unsigned int lastkbits = *(reinterpret_cast<const unsigned int*>(&x)) & m;
+  return (float) lastkbits / z;
+}
 
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
@@ -273,7 +303,7 @@ public:
             // later, osorb c in row_sum_mi
             //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
 
-            for (int ni = 0; ni < size<1>(scores); ++ni) {
+            /*for (int ni = 0; ni < size<1>(scores); ++ni) {
                 //printf("mi = %d, ni = %d\n", mi, ni);
                 if (ssw_count == 2 * kBlockN) continue;
                 //float score = scores(mi, ni);
@@ -297,26 +327,27 @@ public:
                 #endif
                 //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
                 ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-            }
+            }*/
             
-            #if 0
+            #if 1
             // experimental block
             // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
             // not by scores(mi,ni) or conditional
-            float p = 0;
+            //float p = 0;
+            //#pragma unroll
             for (int ni = 0; ni < size<1>(scores); ++ni) {
                 //printf("mi = %d, ni = %d\n", mi, ni);
                 if (ssw_count == 2 * kBlockN) continue;
                 //if (ssw_count == ssw_size) continue;
                 float score = scores(mi, ni);
 
-                //score = logf(score) + row_max_mi;
+                /*//score = logf(score) + row_max_mi;
                 float rand_val1 = curand_uniform(&local_state);
                 //float rand_val1 = .5;
                 //float log_rand1 = logf(rand_val1);
                 score += rand_val1;
                 //score += logf(score);
-                p += score; continue;
+                p += score; continue;*/
 
                 /*score = logf(score) + row_max_mi;
                 float rand_val1 = curand_uniform(&local_state);
@@ -324,21 +355,27 @@ public:
                 score += log_rand1;
                 p += score; continue;*/
                 
-                float rand_val = curand_uniform(&local_state);
+                //float rand_val = curand_uniform(&local_state);
+                float rand_val = .5;
+                //float rand_val = (float) ((ni % 10) + 1) / 10; // works much worse than rand_val=.5 or even .1 ???
+                //float rand_val = .1;
+                //float rand_val = float2rand(score);
                 if (score * c <= row_sum_tot_mi * rand_val) continue;
-                int dcount = 1;
+                //if (thread(0, PRINT_BID)) printFloatBits(score);
+                //if (thread(0, PRINT_BID)) printf("rand val: %f\n", rand_val);
+                //int dcount = 1;
                 //int dcount = !(score * c <= row_sum_tot_mi * rand_val);
                 score = logf(score) + row_max_mi;
                 float log_rand = logf(rand_val);
-                p += score; continue; // experim
+                //p += score; continue; // experim
                 char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
                 auto coord = tcaccs_lo(mi, ni);
                 int col = get<1>(coord);
                 //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
-                ssweights[ssw_count] = SSWeight{score, log_rand, row, col};
-                ssw_count += dcount;
+                ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                //ssw_count += dcount;
             }
-            ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
+            //ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
             #endif
         }
         #if VERBAL
