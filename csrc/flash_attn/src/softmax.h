@@ -190,8 +190,8 @@ struct StochSparse {
     //SSWeight ssweights [ssw_size];
     int ssw_count = 0;
 
-    curandState local_state;
-    //curandStatePhilox4_32_10_t state;
+    //curandState local_state;
+    curandStatePhilox4_32_10_t state;
 
 private:
 
@@ -217,8 +217,8 @@ public:
         #endif
         tcaccs = get_tcaccs();
         int seed = 0;
-        curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
-        //curand_init(seed, blockIdx.x * blockDim.x + threadIdx.x, 0, &state);
+        //curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
+        curand_init(seed, blockIdx.x * blockDim.x + threadIdx.x, 0, &state);
     };
 
     template<typename Tensor0>
@@ -275,13 +275,11 @@ public:
         #endif
     };
 
-    /*__device__ void store_helper (int mi, int ni, float store, float rand_val) {
-        score = logf(score) + row_max(mi);
+    /*__device__ void store_helper (char row, int col, float score, float rand_val, float row_max) {
+        score = logf(score) + row_max;
         float log_rand = logf(rand_val);
-        char row = mi;
-        auto coord = tcaccs_lo(mi, ni);
-        int col = get<1>(coord);
-        ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};*/
+        ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+    };*/
 
     template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
@@ -302,6 +300,9 @@ public:
         }
         #endif
         #endif
+        //float4 rand_vals0 = curand_uniform4(&state);
+        //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
+        float rand_vals[4] = {.8586751, .6543543, .4565756, .2645365};
         // float rand_vals[128];
         // //for (int i = 0; i < size<1>(scores); ++i) rand_vals[i] = .5;
         // for (int i = 0; i < 128; ++i) rand_vals[i] = .5;
@@ -348,7 +349,7 @@ public:
                 ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
             }*/
             
-            #if 1
+            #if 0 //1
             // experimental block
             // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
             // not by scores(mi,ni) or conditional
@@ -383,8 +384,10 @@ public:
                 //float rand_val = .1;
                 //rand_val += (rand_val > .91) ? -.9 : .1;
                 //float rand_val = float2rand(score);
-                //if (score * c <= row_sum_tot_mi * rand_val) continue;
-                if (score * c * ((ni % 2) + 1) <= row_sum_tot_mi * rand_val) continue;
+                //float dlr = -logf((ni % 2) + 1);
+                if (score * c <= row_sum_tot_mi * rand_val) continue;
+                //if (score * c * ((ni % 2) + 1) <= row_sum_tot_mi * rand_val) continue;
+                //if (score * c <= row_sum_tot_mi * rand_val * ((ni % 2) + 1)) continue;
                 //if (score <= row_sum_tot_mi_oc * rand_val) continue;
                 //if (thread(0, PRINT_BID)) printFloatBits(score);
                 //if (thread(0, PRINT_BID)) printf("rand val: %f\n", rand_val);
@@ -392,7 +395,7 @@ public:
                 //int dcount = !(score * c <= row_sum_tot_mi * rand_val);
                 score = logf(score) + row_max_mi;
                 float log_rand = logf(rand_val);
-                log_rand -= logf((ni % 2) + 1);
+                //log_rand -= logf((ni % 2) + 1);
                 //p += score; continue; // experim
                 char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
                 //int row = mi;
@@ -405,28 +408,28 @@ public:
             }
             //ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
             #endif
-            #if 0
+            #if 1 //0
             // experimental block
             // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
             // not by scores(mi,ni) or conditional
+            //float rand_vals[4] = {.8, .6, .4, .2};
+            //float4 rand_vals0 = curand_uniform4(&state);
+            //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
             int ki_max = size<1>(scores) / 4;
             for (int ki = 0; ki < ki_max; ++ki) {
-                float4 rand_vals0 = curand_uniform4(&state);
-                float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
+                if (ssw_count + 4 > 2 * kBlockN) continue;
                 for (int i = 0; i < 4; ++i) {
-                //for (int ni = 0; ni < size<1>(scores); ++ni) {
-                    int ni = 4 * ki + i;
-                    //printf("mi = %d, ni = %d\n", mi, ni);
-                    if (ssw_count == 2 * kBlockN) continue;
-                    float score = scores(mi, ni);
                     float rand_val = rand_vals[i];
-                    if (score * c <= row_sum_tot_mi * rand_val) continue;
-                    score = logf(score) + row_max_mi;
-                    float log_rand = logf(rand_val);
-                    char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                    auto coord = tcaccs_lo(mi, ni);
-                    int col = get<1>(coord);
-                    ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                    int ni = 4 * ki + i;
+                    float score = scores(mi, ni);
+                    if (score * c > row_sum_tot_mi * rand_val) {
+                        score = logf(score) + row_max_mi;
+                        float log_rand = logf(rand_val);
+                        char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+                        auto coord = tcaccs_lo(mi, ni);
+                        int col = get<1>(coord);
+                        ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                    }
                 }
             }
             #endif
