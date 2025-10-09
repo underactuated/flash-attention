@@ -135,15 +135,17 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 #define PRINT_BID 3 //1
 #define VERBAL 0 //1
 
-//#define ssw_size 20
+#define ssw_size 20
 
 struct SSWeight {
     float score;
-    float log_rand; // log of random float from [0, 1]
+    /*float log_rand; // log of random float from [0, 1]
     //int row;
     char row;
     int col;
-    //char col;
+    //char col;*/
+    __half log_rand;
+    short row;
 
     //__device__ SSWeight (float score_, float log_rand_, char row_, int col_) : score(score_), log_rand(log_rand_), row(row_), col(col_) {};
 };
@@ -177,7 +179,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = 10; //1e-30; //10;
+    const float c = 1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -285,7 +287,6 @@ public:
     __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
-        //float c = 10;
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
         #if 1
         #if VERBAL
@@ -300,9 +301,15 @@ public:
         }
         #endif
         #endif
+        const int k = 8; //16; //8; //6; //1; //2; //4;
         //float4 rand_vals0 = curand_uniform4(&state);
         //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
-        float rand_vals[4] = {.8586751, .6543543, .4565756, .2645365};
+        //float rand_vals[k] = {.5};
+        //float rand_vals[k] = {.7586751, .3543543};
+        //float rand_vals[k] = {.8586751, .6543543, .4565756, .2645365};
+        //float rand_vals[k] = {.9547646, .8586751, .6543543, .4565756, .2645365, .13524};
+        float rand_vals[k] = {.8586751, .7546547, .6543543, .5675878, .4565756, .3564365, .2645365, .1342543};
+        //float rand_vals[k] = {.8586751, .7546547, .6543543, .5675878, .4565756, .3564365, .2645365, .1342543, .05, .1, .2, .4, .5, .6, .7, .8};
         // float rand_vals[128];
         // //for (int i = 0; i < size<1>(scores); ++i) rand_vals[i] = .5;
         // for (int i = 0; i < 128; ++i) rand_vals[i] = .5;
@@ -317,8 +324,8 @@ public:
             //#pragma unroll
 
             float row_max_mi = row_max(mi);
-            float row_sum_tot_mi = row_sum_tot(mi);
-            //float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+            //float row_sum_tot_mi = row_sum_tot(mi);
+            float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
             //float row_sum_mi = row_sum(mi);
             // later, osorb c in row_sum_mi
             //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
@@ -403,7 +410,7 @@ public:
                 int col = get<1>(coord);
                 //char col = get<1>(coord);
                 //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                ssweights[ssw_count++] = SSWeight{score, log_rand, row};
                 //ssw_count += dcount;
             }
             //ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
@@ -415,20 +422,24 @@ public:
             //float rand_vals[4] = {.8, .6, .4, .2};
             //float4 rand_vals0 = curand_uniform4(&state);
             //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
-            int ki_max = size<1>(scores) / 4;
+            int ki_max = size<1>(scores) / k;
             for (int ki = 0; ki < ki_max; ++ki) {
-                if (ssw_count + 4 > 2 * kBlockN) continue;
-                for (int i = 0; i < 4; ++i) {
+                if (ssw_count > 2 * kBlockN - k) continue;
+                //if (ssw_count > ssw_size - k) continue;
+                //#pragma unroll
+                for (int i = 0; i < k; ++i) {
                     float rand_val = rand_vals[i];
-                    int ni = 4 * ki + i;
+                    int ni = k * ki + i;
                     float score = scores(mi, ni);
-                    if (score * c > row_sum_tot_mi * rand_val) {
+                    //if (score * c > row_sum_tot_mi * rand_val) {
+                    if (score > row_sum_tot_mi_oc * rand_val) {
                         score = logf(score) + row_max_mi;
                         float log_rand = logf(rand_val);
                         char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
                         auto coord = tcaccs_lo(mi, ni);
                         int col = get<1>(coord);
-                        ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                        //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                        ssweights[ssw_count++] = SSWeight{score, log_rand, row};
                     }
                 }
             }
@@ -455,7 +466,7 @@ public:
         for (int j = 0; j < ssw_count; ++j) {
             auto ssw = ssweights[j];
             // if weight should be skipped, continue
-            if (ssw.score - ssw.log_rand < del_log(ssw.row)) continue;
+            if (ssw.score - (float)ssw.log_rand < del_log(ssw.row)) continue;
             if (i < j) ssweights[i] = ssweights[j];
             i++;
         }
