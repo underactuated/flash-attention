@@ -422,6 +422,8 @@ public:
             //float rand_vals[4] = {.8, .6, .4, .2};
             //float4 rand_vals0 = curand_uniform4(&state);
             //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
+            //float p = 0;
+            int m = 0;
             int ki_max = size<1>(scores) / k;
             for (int ki = 0; ki < ki_max; ++ki) {
                 if (ssw_count > 2 * kBlockN - k) continue;
@@ -431,8 +433,10 @@ public:
                     float rand_val = rand_vals[i];
                     int ni = k * ki + i;
                     float score = scores(mi, ni);
+                    //p += (row_sum_tot_mi_oc * rand_val - score); continue;
                     //if (score * c > row_sum_tot_mi * rand_val) {
                     if (score > row_sum_tot_mi_oc * rand_val) {
+                        m += (1 << ni); continue;
                         score = logf(score) + row_max_mi;
                         float log_rand = logf(rand_val);
                         char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
@@ -443,6 +447,41 @@ public:
                     }
                 }
             }
+            //ssweights[ssw_count++] = SSWeight{p, p, 0};
+            while (1) {
+                int i = __builtin_ffs(m);
+                //printf("i = %d\n", i);
+                //if (i == 0) break;
+                //if (ssw_count > 255) ssw_count = 0;
+                if (i == 0 || ssw_count > 255) break;
+                ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
+                //printf("ssw_count = %d\n", ssw_count);
+                m >>= i;
+            }
+            /*while (m != 0) {
+                //while ((m & 1) == 0 && i < 32) {
+                while ((m & 1) == 0 && m != 0) {
+                    m >>= 1;
+                    i++;
+                }
+                if (m == 0) break;
+                ssweights[ssw_count++] = SSWeight{(float)i, (float)i, 0};
+                m >>= 1;
+                i++;
+            }*/
+            /*
+            int i = 0;
+            while (i < 32) {
+                while ((m & 1) == 0 && i < 32) {
+                    m >>= 1;
+                    i++;
+                }
+                if (i == 32) break;
+                ssweights[ssw_count++] = SSWeight{(float)i, (float)i, 0};
+                m >>= 1;
+                i++;
+            }*/
+            //ssweights[ssw_count++] = SSWeight{(float)m, (float)m, 0};
             #endif
         }
         #if VERBAL
