@@ -135,7 +135,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 #define PRINT_BID 3 //1
 #define VERBAL 0 //1
 
-#define ssw_size 20
+#define ssw_size 100 //30 //20
 
 struct SSWeight {
     float score;
@@ -179,7 +179,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = .1; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float c = .1; //1.; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -285,14 +285,29 @@ public:
 
     ///*
     template <typename Tensor0, typename array>
-    __device__ void save_ssw(int mi, int ni, float row_max_mi, Tensor0 &scores, array &rand_vals) {
-        float score = scores(mi, ni);
+    __attribute__((cold)) __device__ void save_ssw(int mi, int ni, float row_max_mi, Tensor0 &scores, array &rand_vals) {
+        #pragma unroll
+        for (int j = 0; j < 4; j++) {
+            if (j != mi) continue;
+        #pragma unroll
+        for (int i = 0; i < 32; i++) {
+            float score = scores(j, i);
+            if (i == ni) {
+                float rand_val = rand_vals[ni % 8];
+                score = logf(score) + row_max_mi;
+                float log_rand = logf(rand_val);
+                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+                //ssweights[ssw_count++] = SSWeight{0, log_rand, short(mi)};
+            }
+        }
+        }
+        /*float score = scores(mi, ni);
         float rand_val = rand_vals[ni % 8];
         score = logf(score) + row_max_mi;
         float log_rand = logf(rand_val);
-        //ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+        ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};*/
         //ssweights[ssw_count++] = SSWeight{0, log_rand, short(mi)};
-        ssweights[ssw_count++] = SSWeight{score, .1, 0};
+        //ssweights[ssw_count++] = SSWeight{score, .1, 0};
         //return;
     };//*/
 
@@ -314,11 +329,12 @@ public:
         }
         #endif
         #endif
-        const int k = 8; //16; //8; //6; //1; //2; //4;
+        const int k = 4; //16; //8; //6; //1; //2; //4;
         /*float4 rand_vals0 = curand_uniform4(&state);
         float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};*/
         ///*
         float rand_vals[k];
+        #pragma unroll
         for (int i = 0; i < k/4; ++i) {
             float4 rand_vals0 = curand_uniform4(&state);
             int i4 = i * 4;
@@ -338,6 +354,7 @@ public:
         // for (int i = 0; i < 128; ++i) rand_vals[i] = .5;
         //float drv = c * overc - 1.;
         //float drv = 0;
+        #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             //float scores_max_cur = !Check_inf
             //    ? row_max(mi)
@@ -446,12 +463,15 @@ public:
             //float4 rand_vals0 = curand_uniform4(&state);
             //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
             //float p = 0;
+            float selected_scores[32];
+            int iss = 0;
             int m = 0;
             int ki_max = size<1>(scores) / k;
+            #pragma unroll
             for (int ki = 0; ki < ki_max; ++ki) {
                 //if (ssw_count > 2 * kBlockN - k) continue;
-                //if (ssw_count > ssw_size - k) continue;
-                //#pragma unroll
+                if (ssw_count > ssw_size - k) continue;
+                #pragma unroll
                 for (int i = 0; i < k; ++i) {
                     float rand_val = rand_vals[i];
                     int ni = k * ki + i;
@@ -460,6 +480,7 @@ public:
                     //if (score * c > row_sum_tot_mi * rand_val) {
                     if (score > row_sum_tot_mi_oc * rand_val) {
                         //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
+                        selected_scores[iss++] = score;
                         m += (1 << ni); continue;
                         score = logf(score) + row_max_mi;
                         float log_rand = logf(rand_val);
@@ -474,6 +495,7 @@ public:
             //continue;
             //ssweights[ssw_count++] = SSWeight{p, p, 0};
             int ni = 0;
+            iss = 0;
             while (1) {
                 int i = __builtin_ffs(m);
                 //printf("i = %d\n", i);
@@ -488,8 +510,15 @@ public:
                 float log_rand = logf(rand_val);
                 ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
                 //*/
+                float score = selected_scores[iss++];
+                score = logf(score) + row_max_mi;
+                float rand_val = rand_vals[ni % k];
+                //float rand_val = .5; // temp
+                float log_rand = logf(rand_val);
+                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+                //ssweights[ssw_count++] = SSWeight{score, .1, 0};
                 //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
-                save_ssw(mi, i, row_max_mi, scores, rand_vals);
+                //save_ssw(mi, i, row_max_mi, scores, rand_vals);
                 //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
                 m >>= i;
             }
@@ -528,6 +557,7 @@ public:
     template <typename Tensor1>
     __device__ void filter_ssweights (Tensor1 &row_max, Tensor1 &row_sum) {
         if (thread(0, PRINT_BID)) printf("ssw_count: %d\n", ssw_count);
+        //if (ssw_count + 10 < ssw_size) return;
         return;
         // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
         // log_c + log_score - log_row_sum - row_max vs log_rand, or
