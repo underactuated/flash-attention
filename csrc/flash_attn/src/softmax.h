@@ -188,6 +188,8 @@ struct StochSparse {
     static constexpr int kBlockM = Kernel_traits::kBlockM;
     static constexpr int kBlockN = Kernel_traits::kBlockN;
 
+    //static constexpr int ssw_size = 2 * kBlockN;
+
     //SSWeight ssweights [2 * kBlockN];
     SSWeight ssweights [ssw_size];
     int ssw_count = 0;
@@ -343,6 +345,8 @@ public:
             rand_vals[i4 + 2] = rand_vals0.z;
             rand_vals[i4 + 3] = rand_vals0.w;
         }//*/
+        //return;
+        //#if 0
         //float rand_vals[k] = {.5};
         //float rand_vals[k] = {.7586751, .3543543};
         //float rand_vals[k] = {.8586751, .6543543, .4565756, .2645365};
@@ -470,7 +474,8 @@ public:
             #pragma unroll
             for (int ki = 0; ki < ki_max; ++ki) {
                 //if (ssw_count > 2 * kBlockN - k) continue;
-                if (ssw_count > ssw_size - k) continue;
+                //if (ssw_count >= ssw_size - 32) continue;
+                if (ssw_count >= ssw_size - k) continue;
                 #pragma unroll
                 for (int i = 0; i < k; ++i) {
                     float rand_val = rand_vals[i];
@@ -552,6 +557,7 @@ public:
         if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
         #endif
         //if (thread(0, PRINT_BID)) printf("last ssweight = %f\n", ssweights[ssw_count-1].score);
+        //#endif
     };
 
     template <typename Tensor1>
