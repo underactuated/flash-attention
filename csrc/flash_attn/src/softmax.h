@@ -132,7 +132,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define PRINT_BID 3 //1
+#define PRINT_BID 30 //1
 #define VERBAL 0 //1
 
 #define ssw_size 100 //30 //20
@@ -194,7 +194,7 @@ struct StochSparse {
     SSWeight ssweights [ssw_size];
     int ssw_count = 0;
 
-    //curandState local_state;
+    curandState local_state;
     curandStatePhilox4_32_10_t state;
 
 private:
@@ -221,7 +221,7 @@ public:
         #endif
         tcaccs = get_tcaccs();
         int seed = 0;
-        //curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
+        curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
         curand_init(seed, blockIdx.x * blockDim.x + threadIdx.x, 0, &state);
     };
 
@@ -560,9 +560,111 @@ public:
         //#endif
     };
 
+    template <typename Tensor0, typename Tensor1>
+    __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+        float p = 0;
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            /*#pragma unroll
+            for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
+                float score = scores(mi, ni);
+                //score += curand_uniform(&local_state);
+                //p += score;
+                //if (p < score) p += score;
+                p += (p < score)? score : 0;
+            }*/
+            #pragma unroll
+            for (int i = 0; i < size<1>(scores)/4; ++i) {
+                //float4 rand_vals = curand_uniform4(&state);
+                //float rand_val = curand_uniform(&local_state);
+                #pragma unroll
+                for (int j = 0; j < 4; ++j) {
+                    int ni = 4 * i + j;
+                    //for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
+                    float score = scores(mi, ni);
+                    //score += curand_uniform(&local_state);
+                    //float4 rand_vals = curand_uniform4(&state);
+                    //score += rand_vals.x;
+                    //score += rand_val;
+                    /*switch (j) {
+                        case 0: score += rand_vals.x; break;
+                        case 1: score += rand_vals.y; break;
+                        case 2: score += rand_vals.z; break;
+                        case 3: score += rand_vals.w; break;
+                    }*/
+                    //p += score;
+                    //if (p < score) p += score;
+                    p += (p < score)? score : 0;
+                }
+                //if (p < .1 && ssw_count != 50 && p > .09) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+            }
+            //if (p < 1.1 && ssw_count != 50 && p > 1.09) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+        }
+        //if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
+        //if (ssw_count != 50 && p != 0) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+        if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+        /*SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());*/
+        //const int k = 4; //16; //8; //6; //1; //2; //4;
+        /*float4 rand_vals0 = curand_uniform4(&state);
+        float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};*/
+        ///*
+        /*float rand_vals[k];
+        #pragma unroll
+        for (int i = 0; i < k/4; ++i) {
+            float4 rand_vals0 = curand_uniform4(&state);
+            int i4 = i * 4;
+            rand_vals[i4] = rand_vals0.x;
+            rand_vals[i4 + 1] = rand_vals0.y;
+            rand_vals[i4 + 2] = rand_vals0.z;
+            rand_vals[i4 + 3] = rand_vals0.w;
+        }//*/
+        //return;
+        #if 0
+        #pragma unroll
+        //for (int mi = 0; mi < size<0>(scores); ++mi) {
+        for (int mi = 0; mi < 4; ++mi) {
+            //float row_max_mi = row_max(mi);
+            //float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+
+            float p = 0;
+            /*float selected_scores[32];
+            int iss = 0;
+            int m = 0;*/
+            int ki_max = size<1>(scores) / k;
+            #pragma unroll
+            for (int ki = 0; ki < ki_max; ++ki) {
+                //if (ssw_count >= ssw_size - k) continue;
+                #pragma unroll
+                for (int i = 0; i < k; ++i) {
+                    //float rand_val = rand_vals[i];
+                    int ni = k * ki + i;
+                    float score = scores(mi, ni);
+                    p += logf(score);
+                    //if (score > row_sum_tot_mi_oc * rand_val) {
+                    //    p += logf(score);
+                        /*//ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
+                        selected_scores[iss++] = score;
+                        m += (1 << ni); continue;
+                        score = logf(score) + row_max_mi;
+                        float log_rand = logf(rand_val);
+                        char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+                        auto coord = tcaccs_lo(mi, ni);
+                        int col = get<1>(coord);
+                        //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                        ssweights[ssw_count++] = SSWeight{score, log_rand, row};*/
+                    //}
+                }
+            }
+            if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
+        }
+        #endif
+    };
+
     template <typename Tensor1>
     __device__ void filter_ssweights (Tensor1 &row_max, Tensor1 &row_sum) {
-        if (thread(0, PRINT_BID)) printf("ssw_count: %d\n", ssw_count);
+        if (thread(0, PRINT_BID)) {printf("ssw_count: %d\n", ssw_count); printf("%f\n", (float)ssweights[ssw_count-1].score);}
         //if (ssw_count + 10 < ssw_size) return;
         return;
         // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
@@ -728,34 +830,16 @@ struct Softmax_c : public Softmax<kNRows> {
             //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
         }
         ///*
-        ss.original_coordinates(acc_s);
+        //ss.original_coordinates(acc_s);
         //__syncthreads();
-        ss.store_ssweights(scores, row_max, row_sum);
+        //ss.store_ssweights(scores, row_max, row_sum);
+        ss.store_ssweights_test(scores, row_max, row_sum);
         //__syncthreads();
         ss.filter_ssweights(row_max, row_sum);
         //__syncthreads();
         //*/
+        
     };
-
-    /*template<bool Is_dropout=false, bool Split=false, typename Tensor0>
-    __forceinline__ __device__ TensorT normalize_softmax_lse(Tensor0 &acc_o, float softmax_scale, float rp_dropout=1.0) {
-        //ss.filter_ssweights(row_max, row_sum);
-        SumOp<float> sum_op;
-        quad_allreduce_(row_sum, row_sum, sum_op);
-        TensorT lse = make_fragment_like(row_sum);
-        Tensor acc_o_rowcol = make_tensor(acc_o.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_o.layout()));
-        static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
-        #pragma unroll
-        for (int mi = 0; mi < size<0>(acc_o_rowcol); ++mi) {
-            float sum = row_sum(mi);
-            float inv_sum = (sum == 0.f || sum != sum) ? 1.f : 1.f / sum;
-            lse(mi) = (sum == 0.f || sum != sum) ? (Split ? -INFINITY : INFINITY) : row_max(mi) * softmax_scale + __logf(sum);
-            float scale = !Is_dropout ? inv_sum : inv_sum * rp_dropout;
-            #pragma unroll
-            for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scale; }
-        }
-        return lse;
-    };*/
 
 }; 
 
