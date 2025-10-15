@@ -563,6 +563,11 @@ public:
     template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
         float p = 0;
+        //int m = 0;
+        float selected[32];
+        #pragma unroll
+        for (int i = 0; i < 32; ++i) selected[i] = 0.0f;
+        //int si = 0;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             /*#pragma unroll
@@ -573,6 +578,8 @@ public:
                 //if (p < score) p += score;
                 p += (p < score)? score : 0;
             }*/
+            //float selected[32];
+            //int si = 0;
             #pragma unroll
             for (int i = 0; i < size<1>(scores)/4; ++i) {
                 //float4 rand_vals = curand_uniform4(&state);
@@ -594,15 +601,44 @@ public:
                     }*/
                     //p += score;
                     //if (p < score) p += score;
-                    p += (p < score)? score : 0;
+                    //m += (p < score) * (1 << ni);
+                    //m += (p < score)? 1 << ni : 0;
+                    //m += (p > score)? 0 : 1 << ni;
+                    //if (p < score) m += (1 << ni);
+                    //p += (p < score)? score : 0;
+                    //selected[ni] = p;
+                    //selected[ni] += (p < score)? score : 0;
+                    //selected[ni] += (score > 2)? score : 0;
+                    selected[ni] += (score < .1)? score : 0;
+                    //if (score < 1e-6) selected[ni] = score;
+                    //selected[ni] = (score < 1e-6)? score : 0;
+                    p += score; // / 1024;
+                    /*if (score > .1) {
+                        switch (si) {
+                            case (0): selected[0] = score; break;
+                            case (1): selected[1] = score; break;
+                            case (2): selected[2] = score; break;
+                            case (3): selected[3] = score; break;
+                        }
+                        si++;
+                    }*/
                 }
-                //if (p < .1 && ssw_count != 50 && p > .09) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+                //if (p < 1 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+                //if (p < 1 && si != 10 && p > .09) selected[si++] = p;
+                //selected[si += (p < 1 && si != 10)] = p;
             }
-            //if (p < 1.1 && ssw_count != 50 && p > 1.09) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+            //if (p < 5 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+            //if (p < 3 && ssw_count != 1) ssweights[ssw_count++] = SSWeight{selected[mi], logf(p), 0};
         }
         //if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
         //if (ssw_count != 50 && p != 0) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
-        if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+        //if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[ssw_count], logf(p), 0};
+        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores(0, ssw_count), logf(p), 0};
+        //if (thread(0, PRINT_BID)) printf("m = %d\n", m);
         /*SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());*/
@@ -664,7 +700,10 @@ public:
 
     template <typename Tensor1>
     __device__ void filter_ssweights (Tensor1 &row_max, Tensor1 &row_sum) {
-        if (thread(0, PRINT_BID)) {printf("ssw_count: %d\n", ssw_count); printf("%f\n", (float)ssweights[ssw_count-1].score);}
+        if (thread(0, PRINT_BID)) {
+            printf("ssw_count: %d\n", ssw_count);
+            if (ssw_count) printf("%f\n", (float)ssweights[ssw_count-1].score);
+        }
         //if (ssw_count + 10 < ssw_size) return;
         return;
         // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
