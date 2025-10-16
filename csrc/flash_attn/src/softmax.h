@@ -564,11 +564,24 @@ public:
     __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
         float p = 0;
         //int m = 0;
-        float selected[32];
-        #pragma unroll
-        for (int i = 0; i < 32; ++i) selected[i] = 0.0f;
+        float selected[32 * 4];
+        
+        /*//__shared__ float shared_selected[128 * 32];
+        __shared__ int shared_count;
+        int tid = threadIdx.x;
+        //int bid = blockIdx.x;
+        int count = 0;
+        if (tid == 0) shared_count = 0;//*/
+        __syncthreads();
+
+        /*int start_pos = atomicAdd(&shared_count, local_matches);
+        for (int i = 0; i < local_matches && start_pos + i < 512; i++) {
+            shared_indices[start_pos + i] = local_indices[i];*/
+            
+        //#pragma unroll
+        for (int i = 0; i < 32 * 4; ++i) selected[i] = 0.0f;
         //int si = 0;
-        #pragma unroll
+        //#pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             /*#pragma unroll
             for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
@@ -580,11 +593,11 @@ public:
             }*/
             //float selected[32];
             //int si = 0;
-            #pragma unroll
+            //#pragma unroll
             for (int i = 0; i < size<1>(scores)/4; ++i) {
                 //float4 rand_vals = curand_uniform4(&state);
                 //float rand_val = curand_uniform(&local_state);
-                #pragma unroll
+                //#pragma unroll
                 for (int j = 0; j < 4; ++j) {
                     int ni = 4 * i + j;
                     //for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
@@ -609,10 +622,19 @@ public:
                     //selected[ni] = p;
                     //selected[ni] += (p < score)? score : 0;
                     //selected[ni] += (score > 2)? score : 0;
-                    selected[ni] += (score < .1)? score : 0;
-                    //if (score < 1e-6) selected[ni] = score;
+                    //selected[ni] += (score < .1)? score : 0;
+                    //if (score > .1) selected[ni] += score;
                     //selected[ni] = (score < 1e-6)? score : 0;
                     p += score; // / 1024;
+                    if (score > .1) {
+                        selected[32 * mi + ni] += score;
+                        /*
+                        if (count < 1) {
+                            count = atomicAdd(&shared_count, 1);
+                            //shared_selected[ind] = score;
+                        }//*/
+                        //break;
+                    }
                     /*if (score > .1) {
                         switch (si) {
                             case (0): selected[0] = score; break;
@@ -630,13 +652,59 @@ public:
             //if (p < 5 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
             //if (p < 3 && ssw_count != 1) ssweights[ssw_count++] = SSWeight{selected[mi], logf(p), 0};
         }
+
+        /*//#pragma unroll
+        //for (int l = 0; l < 1; ++l) {
+            int ind = (int) (10 * curand_uniform(&local_state));
+            int ind1 = (int) (10 * curand_uniform(&local_state));
+            float sel = 0, sel1 = 0;
+            for (int mi = 0; mi < size<0>(scores); ++mi) {
+                for (int i = 0; i < size<1>(scores)/4; ++i) {
+                    for (int j = 0; j < 4; ++j) {
+                        int ni = 4 * i + j;
+                        float score = scores(mi, ni);
+                        //p += score; // / 1024;
+                        if (score > .5) {
+                            selected[32 * mi + ni] += score;
+                            p += score;
+                        }
+                        sel = (ni == ind)? score : sel;
+                        sel1 = (ni == ind1)? score : sel1;
+                        //sel = (ni == ind)? selected[32 * mi + ni] : sel;
+                    }
+                }
+            }
+            p = p + sel;// + selected[5];
+            if (ssw_count != 5) ssweights[ssw_count++] = SSWeight{sel, logf(p), 0};
+        //}*/
+
+        /*ind = (int) (10 * curand_uniform(&local_state));
+        sel = 0;
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            for (int i = 0; i < size<1>(scores)/4; ++i) {
+                for (int j = 0; j < 4; ++j) {
+                    int ni = 4 * i + j;
+                    float score = scores(mi, ni);
+                    //p += score; // / 1024;
+                    if (score > .5) {
+                        selected[32 * mi + ni] += score;
+                        p += score;
+                    }
+                    sel = (ni == ind)? score : sel;
+                }
+            }
+        }
+        p = p + sel + selected[5];
+        if (ssw_count != 5) ssweights[ssw_count++] = SSWeight{sel, logf(p), 0};*/
+        
         //if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
         //if (ssw_count != 50 && p != 0) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
         //if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[ssw_count], logf(p), 0};
-        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
-        if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        //if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        //if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{shared_selected[5], logf(p), 0};
         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores(0, ssw_count), logf(p), 0};
         //if (thread(0, PRINT_BID)) printf("m = %d\n", m);
         /*SumOp<float> sum_op;
