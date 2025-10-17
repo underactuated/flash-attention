@@ -169,6 +169,20 @@ struct SSWeight {
     printf("\n"); // Newline after printing all bits
 }*/
 
+__device__ __forceinline__ void printIntBits(int num) {
+    int i;
+    // Iterate from the most significant bit to the least significant bit
+    for (i = (sizeof(int) * CHAR_BIT) - 1; i >= 0; i--) {
+        // Check if the i-th bit is set
+        if ((num >> i) & 1) {
+            printf("1");
+        } else {
+            printf("0");
+        }
+    }
+    printf("\n");
+}
+
 __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
   int z = 1 << k;
   int m = z - 1;
@@ -179,7 +193,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = .1; //1.; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float c = 10; //1.; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -196,6 +210,8 @@ struct StochSparse {
 
     curandState local_state;
     curandStatePhilox4_32_10_t state;
+
+    float scores_subset[10];
 
 private:
 
@@ -561,6 +577,162 @@ public:
     };
 
     template <typename Tensor0, typename Tensor1>
+    __device__ void store_ssweights_test0 (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+        int m[4] = {0, 0, 0, 0};
+        int rand_count = 32;
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) { // assume mi < 4
+            float row_max_mi = row_max(mi);
+            float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+            #pragma unroll
+            for (int ni = 0; ni < size<1>(scores); ++ni) {
+                float score = scores(mi, ni);
+                int bit_pos = __builtin_ffs(rand_count);
+                int over_rand_val = 1 << bit_pos;
+                m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
+                rand_count++;
+            }
+        }
+
+        #if 1
+        if (thread(0, PRINT_BID)) {
+            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+            for (int i = 0; i < 4; i++) printIntBits(m[i]);
+        }
+        #endif
+
+        float selected_scores[32];
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            int bits = m[mi];
+            int ssi = 0;
+            int ni = -1;
+            #if 1
+            while (bits && ssw_count < ssw_size) {
+                int i = __builtin_ffs(bits);
+                ni += i;
+                selected_scores[ssi++] = get_score_predicated(scores, 32 * mi + ni);
+                if (ssi >= 32 || ni >= 32) break; //{printf("ssi = %d, ni = %d\n", ssi, ni); break;}
+                bits >>= i;
+                if (thread(0, PRINT_BID)) printf("ssi = %d, ni = %d, i = %d bits = %d\n", ssi, ni, i, bits);
+                // /*
+                // float score = scores(mi, ni);
+                // float rand_val = rand_vals[ni % k];
+                // score = logf(score) + row_max_mi;
+                // float log_rand = logf(rand_val);
+                // ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+                // //*/
+                // float score = selected_scores[iss++];
+                // score = logf(score) + row_max_mi;
+                // float rand_val = rand_vals[ni % k];
+                // //float rand_val = .5; // temp
+                // float log_rand = logf(rand_val);
+                // ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+                // //ssweights[ssw_count++] = SSWeight{score, .1, 0};
+                // //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
+                // //save_ssw(mi, i, row_max_mi, scores, rand_vals);
+                // //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+                // m >>= i;
+            }
+            #endif
+            if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+        }
+
+        #if VERBAL
+        if (thread(0, PRINT_BID)) {
+            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+            for (int i = 0; i < 4; i++) printIntBits(m[i]);
+        }
+        #endif
+
+        #if 0
+            float selected_scores[32];
+            int iss = 0;
+            int m = 0;
+            int ki_max = size<1>(scores) / k;
+            #pragma unroll
+            for (int ki = 0; ki < ki_max; ++ki) {
+                //if (ssw_count > 2 * kBlockN - k) continue;
+                //if (ssw_count >= ssw_size - 32) continue;
+                if (ssw_count >= ssw_size - k) continue;
+                #pragma unroll
+                for (int i = 0; i < k; ++i) {
+                    float rand_val = rand_vals[i];
+                    int ni = k * ki + i;
+                    float score = scores(mi, ni);
+                    //p += (row_sum_tot_mi_oc * rand_val - score); continue;
+                    //if (score * c > row_sum_tot_mi * rand_val) {
+                    if (score > row_sum_tot_mi_oc * rand_val) {
+                        //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
+                        selected_scores[iss++] = score;
+                        m += (1 << ni); continue;
+                        score = logf(score) + row_max_mi;
+                        float log_rand = logf(rand_val);
+                        char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+                        auto coord = tcaccs_lo(mi, ni);
+                        int col = get<1>(coord);
+                        //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+                        ssweights[ssw_count++] = SSWeight{score, log_rand, row};
+                    }
+                }
+            }
+            
+            //continue;
+            //ssweights[ssw_count++] = SSWeight{p, p, 0};
+            int ni = 0;
+            iss = 0;
+            while (1) {
+                int i = __builtin_ffs(m);
+                //printf("i = %d\n", i);
+                //if (i == 0) break;
+                //if (ssw_count > 255) ssw_count = 0;
+                if (i == 0 || ssw_count >= ssw_size) break;
+                ni += i;
+                /*
+                float score = scores(mi, ni);
+                float rand_val = rand_vals[ni % k];
+                score = logf(score) + row_max_mi;
+                float log_rand = logf(rand_val);
+                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+                //*/
+                float score = selected_scores[iss++];
+                score = logf(score) + row_max_mi;
+                float rand_val = rand_vals[ni % k];
+                //float rand_val = .5; // temp
+                float log_rand = logf(rand_val);
+                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+                //ssweights[ssw_count++] = SSWeight{score, .1, 0};
+                //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
+                //save_ssw(mi, i, row_max_mi, scores, rand_vals);
+                //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+                m >>= i;
+            }
+
+            //#endif
+        }
+        #if VERBAL
+        if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+        #endif
+        //if (thread(0, PRINT_BID)) printf("last ssweight = %f\n", ssweights[ssw_count-1].score);
+        #endif
+    };
+
+    template <typename Tensor0>
+    __device__ float get_score_predicated (Tensor0 &scores, int target) {
+        float result = 0.0f;
+        #pragma unroll
+        for (int m = 0; m < 4; m++) {
+            #pragma unroll
+            for (int n = 0; n < 32; n++) {
+                result = (32 * m + n == target) ? scores(m, n) : result;
+            }
+        }
+        return result;
+    };
+
+    template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
         float p = 0;
         //int m = 0;
@@ -653,6 +825,70 @@ public:
             //if (p < 3 && ssw_count != 1) ssweights[ssw_count++] = SSWeight{selected[mi], logf(p), 0};
         }
 
+        float f = 3;
+        int lmax = (int) (f * curand_uniform(&local_state));
+        //int lmax = 2;
+        #pragma unroll
+        for (int l = 0; l < lmax; l++) {
+            int target = (int) (128 * curand_uniform(&local_state));
+            scores_subset[l] = get_score_predicated(scores, target);
+        }
+
+        /* // 158 ms
+        float f = 3;
+        int lmax = (int) (f * curand_uniform(&local_state));
+        #pragma unroll
+        for (int l = 0; l < lmax; l++) {
+            int target = (int) (128 * curand_uniform(&local_state));
+            float result = 0.0f;            
+            #pragma unroll
+            for (int m = 0; m < 4; m++) {
+                #pragma unroll
+                for (int n = 0; n < 32; n++) {
+                    int current_flat = (m << __builtin_ctz(32)) | n;
+                    result = (current_flat == target) ? scores(m, n) : result;
+                }
+            }
+            scores_subset[l] = result;
+        }*/
+
+        /* // 158 ms
+        float f = 3;
+        int lmax = (int) (f * curand_uniform(&local_state));
+        #pragma unroll
+        for (int l = 0; l < lmax; l++) {
+            int target = (int) (128 * curand_uniform(&local_state));
+            float result = 0.0f;
+            #pragma unroll
+            for (int m = 0; m < 4; m++) {
+                #pragma unroll
+                for (int n = 0; n < 32; n++) {
+                    result = (32 * m + n == target) ? scores(m, n) : result;
+                }
+            }
+            scores_subset[l] = result;
+        }*/
+
+        /* // 150 ms
+        float f = 3;
+        int lmax = (int) (f * curand_uniform(&local_state));
+        #pragma unroll
+        for (int l = 0; l < lmax; l++) {
+            int target = (int) (128 * curand_uniform(&local_state));
+            #pragma unroll
+            for (int m = 0; m < 4; m++) {
+                #pragma unroll
+                for (int n = 0; n < 32; n++) {
+                    if (32 * m + n == target) scores_subset[l] = scores(m, n);
+                }
+            }
+        }*/
+
+        for (int l=0; l<lmax; l++){
+            //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores_subset[l], logf(p), 0};
+            if (ssw_count != 5 && p < 2) ssweights[ssw_count++] = SSWeight{scores_subset[ssw_count], logf(p), 0};
+        }
+
         /*//#pragma unroll
         //for (int l = 0; l < 1; ++l) {
             int ind = (int) (10 * curand_uniform(&local_state));
@@ -702,8 +938,8 @@ public:
         //if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[ssw_count], logf(p), 0};
-        if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
-        //if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+        if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
         //if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{shared_selected[5], logf(p), 0};
         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores(0, ssw_count), logf(p), 0};
         //if (thread(0, PRINT_BID)) printf("m = %d\n", m);
@@ -940,7 +1176,8 @@ struct Softmax_c : public Softmax<kNRows> {
         //ss.original_coordinates(acc_s);
         //__syncthreads();
         //ss.store_ssweights(scores, row_max, row_sum);
-        ss.store_ssweights_test(scores, row_max, row_sum);
+        //ss.store_ssweights_test(scores, row_max, row_sum);
+        ss.store_ssweights_test0(scores, row_max, row_sum);
         //__syncthreads();
         ss.filter_ssweights(row_max, row_sum);
         //__syncthreads();
