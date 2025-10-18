@@ -135,7 +135,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 #define PRINT_BID 30 //1
 #define VERBAL 0 //1
 
-#define ssw_size 100 //30 //20
+#define ssw_size 500 //100 //30 //20
 
 struct SSWeight {
     float score;
@@ -146,8 +146,15 @@ struct SSWeight {
     //char col;*/
     __half log_rand;
     short row;
-
+    
     //__device__ SSWeight (float score_, float log_rand_, char row_, int col_) : score(score_), log_rand(log_rand_), row(row_), col(col_) {};
+};
+
+struct SSWeight0 {
+    float score;
+    char log_rand;
+    char row;
+    short col;
 };
 
 /*__device__ __forceinline__ void printFloatBits(float f) {
@@ -193,7 +200,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = 10; //1.; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float c = 50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -206,6 +213,7 @@ struct StochSparse {
 
     //SSWeight ssweights [2 * kBlockN];
     SSWeight ssweights [ssw_size];
+    SSWeight0 ssweights0 [ssw_size];
     int ssw_count = 0;
 
     curandState local_state;
@@ -581,8 +589,8 @@ public:
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
-        int m[4] = {0, 0, 0, 0};
-        int rand_count = 32;
+        unsigned int m[4] = {0, 0, 0, 0};
+        unsigned int rand_count = 32;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) { // assume mi < 4
             float row_max_mi = row_max(mi);
@@ -591,32 +599,48 @@ public:
             for (int ni = 0; ni < size<1>(scores); ++ni) {
                 float score = scores(mi, ni);
                 int bit_pos = __builtin_ffs(rand_count);
-                int over_rand_val = 1 << bit_pos;
+                unsigned int over_rand_val = 1 << bit_pos;
                 m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
                 rand_count++;
             }
         }
 
-        #if 1
-        if (thread(0, PRINT_BID)) {
-            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
-            for (int i = 0; i < 4; i++) printIntBits(m[i]);
-        }
-        #endif
+        // #if 0 //1
+        // if (thread(0, PRINT_BID)) {
+        //     printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+        //     for (int i = 0; i < 4; i++) printIntBits(m[i]);
+        // }
+        // #endif
 
-        float selected_scores[32];
+        //float selected_scores[32];
+        unsigned int rand_count0 = rand_count - 4 * 32 + 1; 
+        #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
-            int bits = m[mi];
+            unsigned int bits = m[mi];
             int ssi = 0;
             int ni = -1;
-            #if 1
+            //float score_sum = 0;
             while (bits && ssw_count < ssw_size) {
                 int i = __builtin_ffs(bits);
                 ni += i;
-                selected_scores[ssi++] = get_score_predicated(scores, 32 * mi + ni);
-                if (ssi >= 32 || ni >= 32) break; //{printf("ssi = %d, ni = %d\n", ssi, ni); break;}
+                //selected_scores[ssi++] = get_score_predicated(scores, 32 * mi + ni);
                 bits >>= i;
-                if (thread(0, PRINT_BID)) printf("ssi = %d, ni = %d, i = %d bits = %d\n", ssi, ni, i, bits);
+                //ssweights[ssw_count++] = SSWeight{selected_scores[ssi-1], -.5, (short)mi};
+
+                //float score = get_score_predicated(scores, 32 * mi + ni);
+                float score = get_score_predicated_mi(scores, mi, ni);
+                //score_sum += score;
+                /*float log_rand = -__builtin_ffs(rand_count0 + ni);
+                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};*/
+                char log_rand = __builtin_ffs(rand_count0 + ni);
+                auto coord = tcaccs_lo(mi, ni);
+                short col = get<1>(coord);
+                ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+                ssi++;
+
+                //selected_scores[ssi++] = get_score_predicated_mi(scores, mi, ni);
+                
+                //if (thread(0, PRINT_BID)) printf("ssi = %d, ni = %d, i = %d bits = %d\n", ssi, ni, i, bits);
                 // /*
                 // float score = scores(mi, ni);
                 // float rand_val = rand_vals[ni % k];
@@ -636,8 +660,10 @@ public:
                 // //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
                 // m >>= i;
             }
-            #endif
-            if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+            //for (int i = 0; i < ssi; i++) ssweights[ssw_count++] = SSWeight{selected_scores[i], -.5, (short)mi};
+            //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+                //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
+            rand_count0 += 32;
         }
 
         #if VERBAL
@@ -728,6 +754,16 @@ public:
             for (int n = 0; n < 32; n++) {
                 result = (32 * m + n == target) ? scores(m, n) : result;
             }
+        }
+        return result;
+    };
+
+    template <typename Tensor0>
+    __device__ float get_score_predicated_mi (Tensor0 &scores, int mi, int ni) {
+        float result = 0.0f;
+        #pragma unroll
+        for (int n = 0; n < 32; n++) {
+            result = (n == ni) ? scores(mi, n) : result;
         }
         return result;
     };
@@ -1006,7 +1042,8 @@ public:
     __device__ void filter_ssweights (Tensor1 &row_max, Tensor1 &row_sum) {
         if (thread(0, PRINT_BID)) {
             printf("ssw_count: %d\n", ssw_count);
-            if (ssw_count) printf("%f\n", (float)ssweights[ssw_count-1].score);
+            //if (ssw_count) printf("%f\n", (float)ssweights[ssw_count-1].score);
+            if (ssw_count) printf("%f\n", (float)ssweights0[ssw_count-1].score);
         }
         //if (ssw_count + 10 < ssw_size) return;
         return;
