@@ -135,7 +135,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 #define PRINT_BID 30 //1
 #define VERBAL 0 //1
 
-#define ssw_size 500 //100 //30 //20
+#define ssw_size 100 //500 //100 //30 //20
 
 struct SSWeight {
     float score;
@@ -200,7 +200,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = 50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float c = 10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -605,19 +605,21 @@ public:
             }
         }
 
-        // #if 0 //1
-        // if (thread(0, PRINT_BID)) {
-        //     printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
-        //     for (int i = 0; i < 4; i++) printIntBits(m[i]);
-        // }
-        // #endif
+        #if 0
+        if (thread(0, PRINT_BID)) {
+            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+            for (int i = 0; i < 4; i++) printIntBits(m[i]);
+        }
+        #endif
+        //return;
 
+        #if 1 // USE THIS BLOCK FOR H200
         //float selected_scores[32];
         unsigned int rand_count0 = rand_count - 4 * 32 + 1; 
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             unsigned int bits = m[mi];
-            int ssi = 0;
+            //int ssi = 0;
             int ni = -1;
             //float score_sum = 0;
             while (bits && ssw_count < ssw_size) {
@@ -629,6 +631,7 @@ public:
 
                 //float score = get_score_predicated(scores, 32 * mi + ni);
                 float score = get_score_predicated_mi(scores, mi, ni);
+                //float score = get_score_predicated1(scores, mi, ni);
                 //score_sum += score;
                 /*float log_rand = -__builtin_ffs(rand_count0 + ni);
                 ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};*/
@@ -636,7 +639,7 @@ public:
                 auto coord = tcaccs_lo(mi, ni);
                 short col = get<1>(coord);
                 ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
-                ssi++;
+                //ssi++;
 
                 //selected_scores[ssi++] = get_score_predicated_mi(scores, mi, ni);
                 
@@ -665,6 +668,45 @@ public:
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
             rand_count0 += 32;
         }
+        #endif
+
+        #if 0 // USE THIS BLOCK FOR A10
+        float selected_scores[32];
+        unsigned int rand_count0 = rand_count - 4 * 32 + 1; 
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            unsigned int bits = m[mi];
+            int ssi = 0;
+            int ni = -1;
+            //float score_sum = 0;
+            while (bits && ssw_count < ssw_size) {
+                int i = __builtin_ffs(bits);
+                ni += i;
+                bits >>= i;
+
+                //float score = get_score_predicated(scores, 32 * mi + ni);
+                //float score = get_score_predicated_mi(scores, mi, ni);
+                //float score = get_score_predicated1(scores, mi, ni);
+
+                selected_scores[ssi++] = get_score_predicated_mi(scores, mi, ni);
+            }
+            bits = m[mi];
+            ni = -1;
+            for (int j = 0; j < ssi; j++) {
+                int i = __builtin_ffs(bits);
+                ni += i;
+                bits >>= i;
+                float score = selected_scores[j];
+                char log_rand = __builtin_ffs(rand_count0 + ni);
+                auto coord = tcaccs_lo(mi, ni);
+                short col = get<1>(coord);
+                ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+            }
+            //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+                //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
+            rand_count0 += 32;
+        }
+        #endif
 
         #if VERBAL
         if (thread(0, PRINT_BID)) {
@@ -767,6 +809,27 @@ public:
         }
         return result;
     };
+
+    /*template <int mi, typename Tensor0>
+    __device__ float get_score_predicated_mi1 (Tensor0 &scores, int ni) {
+        float result = 0.0f;
+        #pragma unroll
+        for (int n = 0; n < 32; n++) {
+            result = (n == ni) ? scores(mi, n) : result;
+        }
+        return result;
+    };
+
+    template <typename Tensor0>
+    __device__ float get_score_predicated1 (Tensor0 &scores, int mi, int ni) {
+        switch (mi) {
+            case 0: return get_score_predicated_mi1<0>(scores, ni);
+            case 1: return get_score_predicated_mi1<1>(scores, ni);
+            case 2: return get_score_predicated_mi1<2>(scores, ni);
+            case 3: return get_score_predicated_mi1<3>(scores, ni);
+        }
+        return 0;
+    };*/
 
     template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
