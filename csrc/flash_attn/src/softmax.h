@@ -134,6 +134,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 
 #define PRINT_BID 30 //1
 #define VERBAL 0 //1
+#define VERBAL0 1
 
 #define ssw_size 100 //500 //100 //30 //20
 
@@ -200,7 +201,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = 10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float c = 5; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -309,7 +310,7 @@ public:
         ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
     };*/
 
-    ///*
+    /*
     template <typename Tensor0, typename array>
     __attribute__((cold)) __device__ void save_ssw(int mi, int ni, float row_max_mi, Tensor0 &scores, array &rand_vals) {
         #pragma unroll
@@ -327,272 +328,269 @@ public:
             }
         }
         }
-        /*float score = scores(mi, ni);
-        float rand_val = rand_vals[ni % 8];
-        score = logf(score) + row_max_mi;
-        float log_rand = logf(rand_val);
-        ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};*/
-        //ssweights[ssw_count++] = SSWeight{0, log_rand, short(mi)};
-        //ssweights[ssw_count++] = SSWeight{score, .1, 0};
-        //return;
     };//*/
 
-    template <typename Tensor0, typename Tensor1>
-    __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
-        SumOp<float> sum_op;
-        quad_allreduce_(row_sum_tot, row_sum, sum_op);
-        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
-        #if 1
-        #if VERBAL
-        if (thread(0, PRINT_BID)) {
-            float s = 0;
-            for (int mi = 0; mi < 4; ++mi) {
-                printf("row_sum_tot(%d) = %f\n", mi, row_sum_tot(mi));
-                s += row_sum_tot(mi);
-            }
-            printf("s = %f\n", s);
-            //for (int mi = 0; mi < 4; ++mi) printf("row_sum(%d) = %f\n", mi, row_sum(mi) * exp(row_max(mi)));
-        }
-        #endif
-        #endif
-        const int k = 4; //16; //8; //6; //1; //2; //4;
-        /*float4 rand_vals0 = curand_uniform4(&state);
-        float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};*/
-        ///*
-        float rand_vals[k];
-        #pragma unroll
-        for (int i = 0; i < k/4; ++i) {
-            float4 rand_vals0 = curand_uniform4(&state);
-            int i4 = i * 4;
-            rand_vals[i4] = rand_vals0.x;
-            rand_vals[i4 + 1] = rand_vals0.y;
-            rand_vals[i4 + 2] = rand_vals0.z;
-            rand_vals[i4 + 3] = rand_vals0.w;
-        }//*/
-        //return;
-        //#if 0
-        //float rand_vals[k] = {.5};
-        //float rand_vals[k] = {.7586751, .3543543};
-        //float rand_vals[k] = {.8586751, .6543543, .4565756, .2645365};
-        //float rand_vals[k] = {.9547646, .8586751, .6543543, .4565756, .2645365, .13524};
-        //float rand_vals[k] = {.8586751, .7546547, .6543543, .5675878, .4565756, .3564365, .2645365, .1342543};
-        //float rand_vals[k] = {.8586751, .7546547, .6543543, .5675878, .4565756, .3564365, .2645365, .1342543, .05, .1, .2, .4, .5, .6, .7, .8};
-        // float rand_vals[128];
-        // //for (int i = 0; i < size<1>(scores); ++i) rand_vals[i] = .5;
-        // for (int i = 0; i < 128; ++i) rand_vals[i] = .5;
-        //float drv = c * overc - 1.;
-        //float drv = 0;
-        #pragma unroll
-        for (int mi = 0; mi < size<0>(scores); ++mi) {
-            //float scores_max_cur = !Check_inf
-            //    ? row_max(mi)
-            //    : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
-            //float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
-            //row_sum(mi) *= scores_scale;
-            //#pragma unroll
+    // old version of store ssweights
+    // template <typename Tensor0, typename Tensor1>
+    // __device__ void store_ssweights (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+    //     SumOp<float> sum_op;
+    //     quad_allreduce_(row_sum_tot, row_sum, sum_op);
+    //     auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+    //     #if 1
+    //     #if VERBAL
+    //     if (thread(0, PRINT_BID)) {
+    //         float s = 0;
+    //         for (int mi = 0; mi < 4; ++mi) {
+    //             printf("row_sum_tot(%d) = %f\n", mi, row_sum_tot(mi));
+    //             s += row_sum_tot(mi);
+    //         }
+    //         printf("s = %f\n", s);
+    //         //for (int mi = 0; mi < 4; ++mi) printf("row_sum(%d) = %f\n", mi, row_sum(mi) * exp(row_max(mi)));
+    //     }
+    //     #endif
+    //     #endif
+    //     const int k = 4; //16; //8; //6; //1; //2; //4;
+    //     /*float4 rand_vals0 = curand_uniform4(&state);
+    //     float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};*/
+    //     ///*
+    //     float rand_vals[k];
+    //     #pragma unroll
+    //     for (int i = 0; i < k/4; ++i) {
+    //         float4 rand_vals0 = curand_uniform4(&state);
+    //         int i4 = i * 4;
+    //         rand_vals[i4] = rand_vals0.x;
+    //         rand_vals[i4 + 1] = rand_vals0.y;
+    //         rand_vals[i4 + 2] = rand_vals0.z;
+    //         rand_vals[i4 + 3] = rand_vals0.w;
+    //     }//*/
+    //     //return;
+    //     //#if 0
+    //     //float rand_vals[k] = {.5};
+    //     //float rand_vals[k] = {.7586751, .3543543};
+    //     //float rand_vals[k] = {.8586751, .6543543, .4565756, .2645365};
+    //     //float rand_vals[k] = {.9547646, .8586751, .6543543, .4565756, .2645365, .13524};
+    //     //float rand_vals[k] = {.8586751, .7546547, .6543543, .5675878, .4565756, .3564365, .2645365, .1342543};
+    //     //float rand_vals[k] = {.8586751, .7546547, .6543543, .5675878, .4565756, .3564365, .2645365, .1342543, .05, .1, .2, .4, .5, .6, .7, .8};
+    //     // float rand_vals[128];
+    //     // //for (int i = 0; i < size<1>(scores); ++i) rand_vals[i] = .5;
+    //     // for (int i = 0; i < 128; ++i) rand_vals[i] = .5;
+    //     //float drv = c * overc - 1.;
+    //     //float drv = 0;
+    //     #pragma unroll
+    //     for (int mi = 0; mi < size<0>(scores); ++mi) {
+    //         //float scores_max_cur = !Check_inf
+    //         //    ? row_max(mi)
+    //         //    : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
+    //         //float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
+    //         //row_sum(mi) *= scores_scale;
+    //         //#pragma unroll
 
-            float row_max_mi = row_max(mi);
-            //float row_sum_tot_mi = row_sum_tot(mi);
-            float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
-            //float row_sum_mi = row_sum(mi);
-            // later, osorb c in row_sum_mi
-            //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
+    //         float row_max_mi = row_max(mi);
+    //         //float row_sum_tot_mi = row_sum_tot(mi);
+    //         float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+    //         //float row_sum_mi = row_sum(mi);
+    //         // later, osorb c in row_sum_mi
+    //         //if (thread(0, PRINT_BID)) printf("row_sum_mi = %f\n", row_sum_mi);
 
-            /*for (int ni = 0; ni < size<1>(scores); ++ni) {
-                //printf("mi = %d, ni = %d\n", mi, ni);
-                if (ssw_count == 2 * kBlockN) continue;
-                //float score = scores(mi, ni);
-                //if (ssw_count > 0) continue; // experimental
-                float score = scores(mi, ni);
-                //float score = 0.0001; //1./(512 * 32); // experim
-                float rand_val = curand_uniform(&local_state);
-                //float rand_val = score * score + .1; // was to test curand time 
-                //if (score <= row_sum_mi * rand_val) continue;
-                if (score * c <= row_sum_tot_mi * rand_val) continue;
-                //if (score == 0) continue; // experim
-                score = logf(score) + row_max_mi;
-                float log_rand = logf(rand_val);
-                char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                auto coord = tcaccs_lo(mi, ni);
-                int col = get<1>(coord);
-                #if VERBAL
-                if (thread(0, PRINT_BID)) {
-                    printf("score = %f, log_rand = %f, row = %d, col = %d\n", score, log_rand, row, col);
-                }
-                #endif
-                //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-            }*/
+    //         /*for (int ni = 0; ni < size<1>(scores); ++ni) {
+    //             //printf("mi = %d, ni = %d\n", mi, ni);
+    //             if (ssw_count == 2 * kBlockN) continue;
+    //             //float score = scores(mi, ni);
+    //             //if (ssw_count > 0) continue; // experimental
+    //             float score = scores(mi, ni);
+    //             //float score = 0.0001; //1./(512 * 32); // experim
+    //             float rand_val = curand_uniform(&local_state);
+    //             //float rand_val = score * score + .1; // was to test curand time 
+    //             //if (score <= row_sum_mi * rand_val) continue;
+    //             if (score * c <= row_sum_tot_mi * rand_val) continue;
+    //             //if (score == 0) continue; // experim
+    //             score = logf(score) + row_max_mi;
+    //             float log_rand = logf(rand_val);
+    //             char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+    //             auto coord = tcaccs_lo(mi, ni);
+    //             int col = get<1>(coord);
+    //             #if VERBAL
+    //             if (thread(0, PRINT_BID)) {
+    //                 printf("score = %f, log_rand = %f, row = %d, col = %d\n", score, log_rand, row, col);
+    //             }
+    //             #endif
+    //             //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
+    //             ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+    //         }*/
             
-            #if 0 //1
-            // experimental block
-            // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
-            // not by scores(mi,ni) or conditional
-            //float p = 0;
-            //#pragma unroll
-            for (int ni = 0; ni < size<1>(scores); ++ni) {
-                //printf("mi = %d, ni = %d\n", mi, ni);
-                if (ssw_count == 2 * kBlockN) continue;
-                //if (ssw_count == ssw_size) continue;
-                float score = scores(mi, ni);
+    //         #if 0 //1
+    //         // experimental block
+    //         // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
+    //         // not by scores(mi,ni) or conditional
+    //         //float p = 0;
+    //         //#pragma unroll
+    //         for (int ni = 0; ni < size<1>(scores); ++ni) {
+    //             //printf("mi = %d, ni = %d\n", mi, ni);
+    //             if (ssw_count == 2 * kBlockN) continue;
+    //             //if (ssw_count == ssw_size) continue;
+    //             float score = scores(mi, ni);
 
-                /*//score = logf(score) + row_max_mi;
-                float rand_val1 = curand_uniform(&local_state);
-                //float rand_val1 = .5;
-                //float log_rand1 = logf(rand_val1);
-                score += rand_val1;
-                //score += logf(score);
-                p += score; continue;*/
+    //             /*//score = logf(score) + row_max_mi;
+    //             float rand_val1 = curand_uniform(&local_state);
+    //             //float rand_val1 = .5;
+    //             //float log_rand1 = logf(rand_val1);
+    //             score += rand_val1;
+    //             //score += logf(score);
+    //             p += score; continue;*/
 
-                /*score = logf(score) + row_max_mi;
-                float rand_val1 = curand_uniform(&local_state);
-                float log_rand1 = logf(rand_val1);
-                score += log_rand1;
-                p += score; continue;*/
+    //             /*score = logf(score) + row_max_mi;
+    //             float rand_val1 = curand_uniform(&local_state);
+    //             float log_rand1 = logf(rand_val1);
+    //             score += log_rand1;
+    //             p += score; continue;*/
                 
-                //float rand_val = curand_uniform(&local_state);
-                float rand_val = .5;
-                //float rand_val = .25;
-                //float rand_val = (ni % 2) ? .5 : .1;
-                //rand_val += drv;
-                //float rand_val = (float) ((ni % 10) + 1) / 10; // works much worse than rand_val=.5 or even .1 ???
-                //float rand_val = .1;
-                //rand_val += (rand_val > .91) ? -.9 : .1;
-                //float rand_val = float2rand(score);
-                //float dlr = -logf((ni % 2) + 1);
-                if (score * c <= row_sum_tot_mi * rand_val) continue;
-                //if (score * c * ((ni % 2) + 1) <= row_sum_tot_mi * rand_val) continue;
-                //if (score * c <= row_sum_tot_mi * rand_val * ((ni % 2) + 1)) continue;
-                //if (score <= row_sum_tot_mi_oc * rand_val) continue;
-                //if (thread(0, PRINT_BID)) printFloatBits(score);
-                //if (thread(0, PRINT_BID)) printf("rand val: %f\n", rand_val);
-                //int dcount = 1;
-                //int dcount = !(score * c <= row_sum_tot_mi * rand_val);
-                score = logf(score) + row_max_mi;
-                float log_rand = logf(rand_val);
-                //log_rand -= logf((ni % 2) + 1);
-                //p += score; continue; // experim
-                char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                //int row = mi;
-                auto coord = tcaccs_lo(mi, ni);
-                int col = get<1>(coord);
-                //char col = get<1>(coord);
-                //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, row};
-                //ssw_count += dcount;
-            }
-            //ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
-            #endif
-            #if 1 //0
-            // experimental block
-            // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
-            // not by scores(mi,ni) or conditional
-            //float rand_vals[4] = {.8, .6, .4, .2};
-            //float4 rand_vals0 = curand_uniform4(&state);
-            //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
-            //float p = 0;
-            float selected_scores[32];
-            int iss = 0;
-            int m = 0;
-            int ki_max = size<1>(scores) / k;
-            #pragma unroll
-            for (int ki = 0; ki < ki_max; ++ki) {
-                //if (ssw_count > 2 * kBlockN - k) continue;
-                //if (ssw_count >= ssw_size - 32) continue;
-                if (ssw_count >= ssw_size - k) continue;
-                #pragma unroll
-                for (int i = 0; i < k; ++i) {
-                    float rand_val = rand_vals[i];
-                    int ni = k * ki + i;
-                    float score = scores(mi, ni);
-                    //p += (row_sum_tot_mi_oc * rand_val - score); continue;
-                    //if (score * c > row_sum_tot_mi * rand_val) {
-                    if (score > row_sum_tot_mi_oc * rand_val) {
-                        //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
-                        selected_scores[iss++] = score;
-                        m += (1 << ni); continue;
-                        score = logf(score) + row_max_mi;
-                        float log_rand = logf(rand_val);
-                        char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                        auto coord = tcaccs_lo(mi, ni);
-                        int col = get<1>(coord);
-                        //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-                        ssweights[ssw_count++] = SSWeight{score, log_rand, row};
-                    }
-                }
-            }
-            //continue;
-            //ssweights[ssw_count++] = SSWeight{p, p, 0};
-            int ni = 0;
-            iss = 0;
-            while (1) {
-                int i = __builtin_ffs(m);
-                //printf("i = %d\n", i);
-                //if (i == 0) break;
-                //if (ssw_count > 255) ssw_count = 0;
-                if (i == 0 || ssw_count >= ssw_size) break;
-                ni += i;
-                /*
-                float score = scores(mi, ni);
-                float rand_val = rand_vals[ni % k];
-                score = logf(score) + row_max_mi;
-                float log_rand = logf(rand_val);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
-                //*/
-                float score = selected_scores[iss++];
-                score = logf(score) + row_max_mi;
-                float rand_val = rand_vals[ni % k];
-                //float rand_val = .5; // temp
-                float log_rand = logf(rand_val);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
-                //ssweights[ssw_count++] = SSWeight{score, .1, 0};
-                //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
-                //save_ssw(mi, i, row_max_mi, scores, rand_vals);
-                //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
-                m >>= i;
-            }
-            /*while (m != 0) {
-                //while ((m & 1) == 0 && i < 32) {
-                while ((m & 1) == 0 && m != 0) {
-                    m >>= 1;
-                    i++;
-                }
-                if (m == 0) break;
-                ssweights[ssw_count++] = SSWeight{(float)i, (float)i, 0};
-                m >>= 1;
-                i++;
-            }*/
-            /*
-            int i = 0;
-            while (i < 32) {
-                while ((m & 1) == 0 && i < 32) {
-                    m >>= 1;
-                    i++;
-                }
-                if (i == 32) break;
-                ssweights[ssw_count++] = SSWeight{(float)i, (float)i, 0};
-                m >>= 1;
-                i++;
-            }*/
-            //ssweights[ssw_count++] = SSWeight{(float)m, (float)m, 0};
-            #endif
-        }
-        #if VERBAL
-        if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
-        #endif
-        //if (thread(0, PRINT_BID)) printf("last ssweight = %f\n", ssweights[ssw_count-1].score);
-        //#endif
-    };
+    //             //float rand_val = curand_uniform(&local_state);
+    //             float rand_val = .5;
+    //             //float rand_val = .25;
+    //             //float rand_val = (ni % 2) ? .5 : .1;
+    //             //rand_val += drv;
+    //             //float rand_val = (float) ((ni % 10) + 1) / 10; // works much worse than rand_val=.5 or even .1 ???
+    //             //float rand_val = .1;
+    //             //rand_val += (rand_val > .91) ? -.9 : .1;
+    //             //float rand_val = float2rand(score);
+    //             //float dlr = -logf((ni % 2) + 1);
+    //             if (score * c <= row_sum_tot_mi * rand_val) continue;
+    //             //if (score * c * ((ni % 2) + 1) <= row_sum_tot_mi * rand_val) continue;
+    //             //if (score * c <= row_sum_tot_mi * rand_val * ((ni % 2) + 1)) continue;
+    //             //if (score <= row_sum_tot_mi_oc * rand_val) continue;
+    //             //if (thread(0, PRINT_BID)) printFloatBits(score);
+    //             //if (thread(0, PRINT_BID)) printf("rand val: %f\n", rand_val);
+    //             //int dcount = 1;
+    //             //int dcount = !(score * c <= row_sum_tot_mi * rand_val);
+    //             score = logf(score) + row_max_mi;
+    //             float log_rand = logf(rand_val);
+    //             //log_rand -= logf((ni % 2) + 1);
+    //             //p += score; continue; // experim
+    //             char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+    //             //int row = mi;
+    //             auto coord = tcaccs_lo(mi, ni);
+    //             int col = get<1>(coord);
+    //             //char col = get<1>(coord);
+    //             //ssweights[ssw_count++] = SSWeight(score, log_rand, row, col);
+    //             ssweights[ssw_count++] = SSWeight{score, log_rand, row};
+    //             //ssw_count += dcount;
+    //         }
+    //         //ssweights[ssw_count++] = SSWeight{p, p, 0, 0};
+    //         #endif
+    //         #if 1 //0
+    //         // experimental block
+    //         // slowdown seems to be caused primarily by curand_uniform(), and to lesser degree by logf(),
+    //         // not by scores(mi,ni) or conditional
+    //         //float rand_vals[4] = {.8, .6, .4, .2};
+    //         //float4 rand_vals0 = curand_uniform4(&state);
+    //         //float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};
+    //         //float p = 0;
+    //         float selected_scores[32];
+    //         int iss = 0;
+    //         int m = 0;
+    //         int ki_max = size<1>(scores) / k;
+    //         #pragma unroll
+    //         for (int ki = 0; ki < ki_max; ++ki) {
+    //             //if (ssw_count > 2 * kBlockN - k) continue;
+    //             //if (ssw_count >= ssw_size - 32) continue;
+    //             if (ssw_count >= ssw_size - k) continue;
+    //             #pragma unroll
+    //             for (int i = 0; i < k; ++i) {
+    //                 float rand_val = rand_vals[i];
+    //                 int ni = k * ki + i;
+    //                 float score = scores(mi, ni);
+    //                 //p += (row_sum_tot_mi_oc * rand_val - score); continue;
+    //                 //if (score * c > row_sum_tot_mi * rand_val) {
+    //                 if (score > row_sum_tot_mi_oc * rand_val) {
+    //                     //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
+    //                     selected_scores[iss++] = score;
+    //                     m += (1 << ni); continue;
+    //                     score = logf(score) + row_max_mi;
+    //                     float log_rand = logf(rand_val);
+    //                     char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+    //                     auto coord = tcaccs_lo(mi, ni);
+    //                     int col = get<1>(coord);
+    //                     //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+    //                     ssweights[ssw_count++] = SSWeight{score, log_rand, row};
+    //                 }
+    //             }
+    //         }
+    //         //continue;
+    //         //ssweights[ssw_count++] = SSWeight{p, p, 0};
+    //         int ni = 0;
+    //         iss = 0;
+    //         while (1) {
+    //             int i = __builtin_ffs(m);
+    //             //printf("i = %d\n", i);
+    //             //if (i == 0) break;
+    //             //if (ssw_count > 255) ssw_count = 0;
+    //             if (i == 0 || ssw_count >= ssw_size) break;
+    //             ni += i;
+    //             /*
+    //             float score = scores(mi, ni);
+    //             float rand_val = rand_vals[ni % k];
+    //             score = logf(score) + row_max_mi;
+    //             float log_rand = logf(rand_val);
+    //             ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+    //             //*/
+    //             float score = selected_scores[iss++];
+    //             score = logf(score) + row_max_mi;
+    //             float rand_val = rand_vals[ni % k];
+    //             //float rand_val = .5; // temp
+    //             float log_rand = logf(rand_val);
+    //             ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
+    //             //ssweights[ssw_count++] = SSWeight{score, .1, 0};
+    //             //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
+    //             //save_ssw(mi, i, row_max_mi, scores, rand_vals);
+    //             //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+    //             m >>= i;
+    //         }
+    //         /*while (m != 0) {
+    //             //while ((m & 1) == 0 && i < 32) {
+    //             while ((m & 1) == 0 && m != 0) {
+    //                 m >>= 1;
+    //                 i++;
+    //             }
+    //             if (m == 0) break;
+    //             ssweights[ssw_count++] = SSWeight{(float)i, (float)i, 0};
+    //             m >>= 1;
+    //             i++;
+    //         }*/
+    //         /*
+    //         int i = 0;
+    //         while (i < 32) {
+    //             while ((m & 1) == 0 && i < 32) {
+    //                 m >>= 1;
+    //                 i++;
+    //             }
+    //             if (i == 32) break;
+    //             ssweights[ssw_count++] = SSWeight{(float)i, (float)i, 0};
+    //             m >>= 1;
+    //             i++;
+    //         }*/
+    //         //ssweights[ssw_count++] = SSWeight{(float)m, (float)m, 0};
+    //         #endif
+    //     }
+    //     #if VERBAL
+    //     if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
+    //     #endif
+    //     //if (thread(0, PRINT_BID)) printf("last ssweight = %f\n", ssweights[ssw_count-1].score);
+    //     //#endif
+    // };
 
     template <typename Tensor0, typename Tensor1>
     __device__ void store_ssweights_test0 (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+        constexpr int mi_max = decltype(size<0>(scores))::value;
+        constexpr int ni_max = decltype(size<1>(scores))::value;
+        static_assert(decltype(size<0>(scores))::value == mi_max);
+        //static_assert(ni_max == 16 || ni_max == 32);
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
-        unsigned int m[4] = {0, 0, 0, 0};
-        unsigned int rand_count = 32;
+        unsigned int m[mi_max] = {};
+        unsigned int rand_count = ni_max;
         #pragma unroll
-        for (int mi = 0; mi < size<0>(scores); ++mi) { // assume mi < 4
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
             float row_max_mi = row_max(mi);
             float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
             #pragma unroll
@@ -605,89 +603,54 @@ public:
             }
         }
 
-        #if 0
-        if (thread(0, PRINT_BID)) {
-            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
-            for (int i = 0; i < 4; i++) printIntBits(m[i]);
-        }
-        #endif
-        //return;
+        //if (thread(0, PRINT_BID)) printf("rand_count = %d\n", rand_count);
 
-        #if 1 // USE THIS BLOCK FOR H200
-        //float selected_scores[32];
-        unsigned int rand_count0 = rand_count - 4 * 32 + 1; 
+        // #if 0
+        // if (thread(0, PRINT_BID)) {
+        //     printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+        //     for (int i = 0; i < mi_max; i++) printIntBits(m[i]);
+        // }
+        // #endif
+
+        #if 0 // USE THIS BLOCK FOR H200
+        unsigned int rand_count0 = rand_count - mi_max * ni_max;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             unsigned int bits = m[mi];
-            //int ssi = 0;
             int ni = -1;
-            //float score_sum = 0;
             while (bits && ssw_count < ssw_size) {
                 int i = __builtin_ffs(bits);
                 ni += i;
-                //selected_scores[ssi++] = get_score_predicated(scores, 32 * mi + ni);
                 bits >>= i;
-                //ssweights[ssw_count++] = SSWeight{selected_scores[ssi-1], -.5, (short)mi};
-
-                //float score = get_score_predicated(scores, 32 * mi + ni);
                 float score = get_score_predicated_mi(scores, mi, ni);
                 //float score = get_score_predicated1(scores, mi, ni);
-                //score_sum += score;
-                /*float log_rand = -__builtin_ffs(rand_count0 + ni);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};*/
+                score = logf(score) + row_max_mi;
                 char log_rand = __builtin_ffs(rand_count0 + ni);
                 auto coord = tcaccs_lo(mi, ni);
                 short col = get<1>(coord);
                 ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
-                //ssi++;
-
-                //selected_scores[ssi++] = get_score_predicated_mi(scores, mi, ni);
-                
-                //if (thread(0, PRINT_BID)) printf("ssi = %d, ni = %d, i = %d bits = %d\n", ssi, ni, i, bits);
-                // /*
-                // float score = scores(mi, ni);
-                // float rand_val = rand_vals[ni % k];
-                // score = logf(score) + row_max_mi;
-                // float log_rand = logf(rand_val);
-                // ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
-                // //*/
-                // float score = selected_scores[iss++];
-                // score = logf(score) + row_max_mi;
-                // float rand_val = rand_vals[ni % k];
-                // //float rand_val = .5; // temp
-                // float log_rand = logf(rand_val);
-                // ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
-                // //ssweights[ssw_count++] = SSWeight{score, .1, 0};
-                // //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
-                // //save_ssw(mi, i, row_max_mi, scores, rand_vals);
-                // //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
-                // m >>= i;
             }
-            //for (int i = 0; i < ssi; i++) ssweights[ssw_count++] = SSWeight{selected_scores[i], -.5, (short)mi};
             //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
-            rand_count0 += 32;
+            rand_count0 += ni_max;
         }
         #endif
 
-        #if 0 // USE THIS BLOCK FOR A10
-        float selected_scores[32];
-        unsigned int rand_count0 = rand_count - 4 * 32 + 1; 
+        #if 1 // USE THIS BLOCK FOR A10
+        float selected_scores[ni_max];
+        unsigned int rand_count0 = rand_count - mi_max * ni_max; 
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
+            float row_max_mi = row_max(mi);
             unsigned int bits = m[mi];
             int ssi = 0;
             int ni = -1;
-            //float score_sum = 0;
             while (bits && ssw_count < ssw_size) {
                 int i = __builtin_ffs(bits);
                 ni += i;
                 bits >>= i;
-
-                //float score = get_score_predicated(scores, 32 * mi + ni);
                 //float score = get_score_predicated_mi(scores, mi, ni);
                 //float score = get_score_predicated1(scores, mi, ni);
-
                 selected_scores[ssi++] = get_score_predicated_mi(scores, mi, ni);
             }
             bits = m[mi];
@@ -697,6 +660,7 @@ public:
                 ni += i;
                 bits >>= i;
                 float score = selected_scores[j];
+                score = logf(score) + row_max_mi;
                 char log_rand = __builtin_ffs(rand_count0 + ni);
                 auto coord = tcaccs_lo(mi, ni);
                 short col = get<1>(coord);
@@ -704,107 +668,39 @@ public:
             }
             //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
-            rand_count0 += 32;
+            rand_count0 += ni_max;
         }
         #endif
 
         #if VERBAL
         if (thread(0, PRINT_BID)) {
             printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
-            for (int i = 0; i < 4; i++) printIntBits(m[i]);
+            for (int i = 0; i < mi_max; i++) printIntBits(m[i]);
         }
-        #endif
-
-        #if 0
-            float selected_scores[32];
-            int iss = 0;
-            int m = 0;
-            int ki_max = size<1>(scores) / k;
-            #pragma unroll
-            for (int ki = 0; ki < ki_max; ++ki) {
-                //if (ssw_count > 2 * kBlockN - k) continue;
-                //if (ssw_count >= ssw_size - 32) continue;
-                if (ssw_count >= ssw_size - k) continue;
-                #pragma unroll
-                for (int i = 0; i < k; ++i) {
-                    float rand_val = rand_vals[i];
-                    int ni = k * ki + i;
-                    float score = scores(mi, ni);
-                    //p += (row_sum_tot_mi_oc * rand_val - score); continue;
-                    //if (score * c > row_sum_tot_mi * rand_val) {
-                    if (score > row_sum_tot_mi_oc * rand_val) {
-                        //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
-                        selected_scores[iss++] = score;
-                        m += (1 << ni); continue;
-                        score = logf(score) + row_max_mi;
-                        float log_rand = logf(rand_val);
-                        char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                        auto coord = tcaccs_lo(mi, ni);
-                        int col = get<1>(coord);
-                        //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-                        ssweights[ssw_count++] = SSWeight{score, log_rand, row};
-                    }
-                }
-            }
-            
-            //continue;
-            //ssweights[ssw_count++] = SSWeight{p, p, 0};
-            int ni = 0;
-            iss = 0;
-            while (1) {
-                int i = __builtin_ffs(m);
-                //printf("i = %d\n", i);
-                //if (i == 0) break;
-                //if (ssw_count > 255) ssw_count = 0;
-                if (i == 0 || ssw_count >= ssw_size) break;
-                ni += i;
-                /*
-                float score = scores(mi, ni);
-                float rand_val = rand_vals[ni % k];
-                score = logf(score) + row_max_mi;
-                float log_rand = logf(rand_val);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
-                //*/
-                float score = selected_scores[iss++];
-                score = logf(score) + row_max_mi;
-                float rand_val = rand_vals[ni % k];
-                //float rand_val = .5; // temp
-                float log_rand = logf(rand_val);
-                ssweights[ssw_count++] = SSWeight{score, log_rand, (short)mi};
-                //ssweights[ssw_count++] = SSWeight{score, .1, 0};
-                //ssweights[ssw_count++] = SSWeight{.1, .1, 0}; //SSWeight{(float)i, (float)i, 0};
-                //save_ssw(mi, i, row_max_mi, scores, rand_vals);
-                //if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
-                m >>= i;
-            }
-
-            //#endif
-        }
-        #if VERBAL
-        if (thread(0, PRINT_BID)) printf("ssw_count = %d\n", ssw_count);
-        #endif
-        //if (thread(0, PRINT_BID)) printf("last ssweight = %f\n", ssweights[ssw_count-1].score);
-        #endif
+        #endif    
     };
 
-    template <typename Tensor0>
+    /*template <typename Tensor0>
     __device__ float get_score_predicated (Tensor0 &scores, int target) {
+        constexpr int mi_max = decltype(size<0>(scores))::value;
+        constexpr int ni_max = decltype(size<1>(scores))::value;
         float result = 0.0f;
         #pragma unroll
-        for (int m = 0; m < 4; m++) {
+        for (int m = 0; m < mi_max; m++) {
             #pragma unroll
-            for (int n = 0; n < 32; n++) {
-                result = (32 * m + n == target) ? scores(m, n) : result;
+            for (int n = 0; n < ni_max; n++) {
+                result = (ni_max * m + n == target) ? scores(m, n) : result;
             }
         }
         return result;
-    };
+    };*/
 
     template <typename Tensor0>
     __device__ float get_score_predicated_mi (Tensor0 &scores, int mi, int ni) {
+        constexpr int ni_max = decltype(size<1>(scores))::value;
         float result = 0.0f;
         #pragma unroll
-        for (int n = 0; n < 32; n++) {
+        for (int n = 0; n < ni_max; n++) {
             result = (n == ni) ? scores(mi, n) : result;
         }
         return result;
@@ -831,283 +727,285 @@ public:
         return 0;
     };*/
 
-    template <typename Tensor0, typename Tensor1>
-    __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
-        float p = 0;
-        //int m = 0;
-        float selected[32 * 4];
+    // template <typename Tensor0, typename Tensor1>
+    // __device__ void store_ssweights_test (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
+    //     float p = 0;
+    //     //int m = 0;
+    //     float selected[32 * 4];
         
-        /*//__shared__ float shared_selected[128 * 32];
-        __shared__ int shared_count;
-        int tid = threadIdx.x;
-        //int bid = blockIdx.x;
-        int count = 0;
-        if (tid == 0) shared_count = 0;//*/
-        __syncthreads();
+    //     /*//__shared__ float shared_selected[128 * 32];
+    //     __shared__ int shared_count;
+    //     int tid = threadIdx.x;
+    //     //int bid = blockIdx.x;
+    //     int count = 0;
+    //     if (tid == 0) shared_count = 0;//*/
+    //     __syncthreads();
 
-        /*int start_pos = atomicAdd(&shared_count, local_matches);
-        for (int i = 0; i < local_matches && start_pos + i < 512; i++) {
-            shared_indices[start_pos + i] = local_indices[i];*/
+    //     /*int start_pos = atomicAdd(&shared_count, local_matches);
+    //     for (int i = 0; i < local_matches && start_pos + i < 512; i++) {
+    //         shared_indices[start_pos + i] = local_indices[i];*/
             
-        //#pragma unroll
-        for (int i = 0; i < 32 * 4; ++i) selected[i] = 0.0f;
-        //int si = 0;
-        //#pragma unroll
-        for (int mi = 0; mi < size<0>(scores); ++mi) {
-            /*#pragma unroll
-            for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
-                float score = scores(mi, ni);
-                //score += curand_uniform(&local_state);
-                //p += score;
-                //if (p < score) p += score;
-                p += (p < score)? score : 0;
-            }*/
-            //float selected[32];
-            //int si = 0;
-            //#pragma unroll
-            for (int i = 0; i < size<1>(scores)/4; ++i) {
-                //float4 rand_vals = curand_uniform4(&state);
-                //float rand_val = curand_uniform(&local_state);
-                //#pragma unroll
-                for (int j = 0; j < 4; ++j) {
-                    int ni = 4 * i + j;
-                    //for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
-                    float score = scores(mi, ni);
-                    //score += curand_uniform(&local_state);
-                    //float4 rand_vals = curand_uniform4(&state);
-                    //score += rand_vals.x;
-                    //score += rand_val;
-                    /*switch (j) {
-                        case 0: score += rand_vals.x; break;
-                        case 1: score += rand_vals.y; break;
-                        case 2: score += rand_vals.z; break;
-                        case 3: score += rand_vals.w; break;
-                    }*/
-                    //p += score;
-                    //if (p < score) p += score;
-                    //m += (p < score) * (1 << ni);
-                    //m += (p < score)? 1 << ni : 0;
-                    //m += (p > score)? 0 : 1 << ni;
-                    //if (p < score) m += (1 << ni);
-                    //p += (p < score)? score : 0;
-                    //selected[ni] = p;
-                    //selected[ni] += (p < score)? score : 0;
-                    //selected[ni] += (score > 2)? score : 0;
-                    //selected[ni] += (score < .1)? score : 0;
-                    //if (score > .1) selected[ni] += score;
-                    //selected[ni] = (score < 1e-6)? score : 0;
-                    p += score; // / 1024;
-                    if (score > .1) {
-                        selected[32 * mi + ni] += score;
-                        /*
-                        if (count < 1) {
-                            count = atomicAdd(&shared_count, 1);
-                            //shared_selected[ind] = score;
-                        }//*/
-                        //break;
-                    }
-                    /*if (score > .1) {
-                        switch (si) {
-                            case (0): selected[0] = score; break;
-                            case (1): selected[1] = score; break;
-                            case (2): selected[2] = score; break;
-                            case (3): selected[3] = score; break;
-                        }
-                        si++;
-                    }*/
-                }
-                //if (p < 1 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
-                //if (p < 1 && si != 10 && p > .09) selected[si++] = p;
-                //selected[si += (p < 1 && si != 10)] = p;
-            }
-            //if (p < 5 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
-            //if (p < 3 && ssw_count != 1) ssweights[ssw_count++] = SSWeight{selected[mi], logf(p), 0};
-        }
+    //     //#pragma unroll
+    //     for (int i = 0; i < 32 * 4; ++i) selected[i] = 0.0f;
+    //     //int si = 0;
+    //     //#pragma unroll
+    //     for (int mi = 0; mi < size<0>(scores); ++mi) {
+    //         /*#pragma unroll
+    //         for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
+    //             float score = scores(mi, ni);
+    //             //score += curand_uniform(&local_state);
+    //             //p += score;
+    //             //if (p < score) p += score;
+    //             p += (p < score)? score : 0;
+    //         }*/
+    //         //float selected[32];
+    //         //int si = 0;
+    //         //#pragma unroll
+    //         for (int i = 0; i < size<1>(scores)/4; ++i) {
+    //             //float4 rand_vals = curand_uniform4(&state);
+    //             //float rand_val = curand_uniform(&local_state);
+    //             //#pragma unroll
+    //             for (int j = 0; j < 4; ++j) {
+    //                 int ni = 4 * i + j;
+    //                 //for (int ni = 0; ni < size<1>(scores); ++ni) {//{ p += scores(mi, ni); } //{ p += logf(scores(mi, ni)); }
+    //                 float score = scores(mi, ni);
+    //                 //score += curand_uniform(&local_state);
+    //                 //float4 rand_vals = curand_uniform4(&state);
+    //                 //score += rand_vals.x;
+    //                 //score += rand_val;
+    //                 /*switch (j) {
+    //                     case 0: score += rand_vals.x; break;
+    //                     case 1: score += rand_vals.y; break;
+    //                     case 2: score += rand_vals.z; break;
+    //                     case 3: score += rand_vals.w; break;
+    //                 }*/
+    //                 //p += score;
+    //                 //if (p < score) p += score;
+    //                 //m += (p < score) * (1 << ni);
+    //                 //m += (p < score)? 1 << ni : 0;
+    //                 //m += (p > score)? 0 : 1 << ni;
+    //                 //if (p < score) m += (1 << ni);
+    //                 //p += (p < score)? score : 0;
+    //                 //selected[ni] = p;
+    //                 //selected[ni] += (p < score)? score : 0;
+    //                 //selected[ni] += (score > 2)? score : 0;
+    //                 //selected[ni] += (score < .1)? score : 0;
+    //                 //if (score > .1) selected[ni] += score;
+    //                 //selected[ni] = (score < 1e-6)? score : 0;
+    //                 p += score; // / 1024;
+    //                 if (score > .1) {
+    //                     selected[32 * mi + ni] += score;
+    //                     /*
+    //                     if (count < 1) {
+    //                         count = atomicAdd(&shared_count, 1);
+    //                         //shared_selected[ind] = score;
+    //                     }//*/
+    //                     //break;
+    //                 }
+    //                 /*if (score > .1) {
+    //                     switch (si) {
+    //                         case (0): selected[0] = score; break;
+    //                         case (1): selected[1] = score; break;
+    //                         case (2): selected[2] = score; break;
+    //                         case (3): selected[3] = score; break;
+    //                     }
+    //                     si++;
+    //                 }*/
+    //             }
+    //             //if (p < 1 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+    //             //if (p < 1 && si != 10 && p > .09) selected[si++] = p;
+    //             //selected[si += (p < 1 && si != 10)] = p;
+    //         }
+    //         //if (p < 5 && ssw_count != 5) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+    //         //if (p < 3 && ssw_count != 1) ssweights[ssw_count++] = SSWeight{selected[mi], logf(p), 0};
+    //     }
 
-        float f = 3;
-        int lmax = (int) (f * curand_uniform(&local_state));
-        //int lmax = 2;
-        #pragma unroll
-        for (int l = 0; l < lmax; l++) {
-            int target = (int) (128 * curand_uniform(&local_state));
-            scores_subset[l] = get_score_predicated(scores, target);
-        }
+    //     float f = 3;
+    //     int lmax = (int) (f * curand_uniform(&local_state));
+    //     //int lmax = 2;
+    //     #pragma unroll
+    //     for (int l = 0; l < lmax; l++) {
+    //         int target = (int) (128 * curand_uniform(&local_state));
+    //         scores_subset[l] = get_score_predicated(scores, target);
+    //     }
 
-        /* // 158 ms
-        float f = 3;
-        int lmax = (int) (f * curand_uniform(&local_state));
-        #pragma unroll
-        for (int l = 0; l < lmax; l++) {
-            int target = (int) (128 * curand_uniform(&local_state));
-            float result = 0.0f;            
-            #pragma unroll
-            for (int m = 0; m < 4; m++) {
-                #pragma unroll
-                for (int n = 0; n < 32; n++) {
-                    int current_flat = (m << __builtin_ctz(32)) | n;
-                    result = (current_flat == target) ? scores(m, n) : result;
-                }
-            }
-            scores_subset[l] = result;
-        }*/
+    //     /* // 158 ms
+    //     float f = 3;
+    //     int lmax = (int) (f * curand_uniform(&local_state));
+    //     #pragma unroll
+    //     for (int l = 0; l < lmax; l++) {
+    //         int target = (int) (128 * curand_uniform(&local_state));
+    //         float result = 0.0f;            
+    //         #pragma unroll
+    //         for (int m = 0; m < 4; m++) {
+    //             #pragma unroll
+    //             for (int n = 0; n < 32; n++) {
+    //                 int current_flat = (m << __builtin_ctz(32)) | n;
+    //                 result = (current_flat == target) ? scores(m, n) : result;
+    //             }
+    //         }
+    //         scores_subset[l] = result;
+    //     }*/
 
-        /* // 158 ms
-        float f = 3;
-        int lmax = (int) (f * curand_uniform(&local_state));
-        #pragma unroll
-        for (int l = 0; l < lmax; l++) {
-            int target = (int) (128 * curand_uniform(&local_state));
-            float result = 0.0f;
-            #pragma unroll
-            for (int m = 0; m < 4; m++) {
-                #pragma unroll
-                for (int n = 0; n < 32; n++) {
-                    result = (32 * m + n == target) ? scores(m, n) : result;
-                }
-            }
-            scores_subset[l] = result;
-        }*/
+    //     /* // 158 ms
+    //     float f = 3;
+    //     int lmax = (int) (f * curand_uniform(&local_state));
+    //     #pragma unroll
+    //     for (int l = 0; l < lmax; l++) {
+    //         int target = (int) (128 * curand_uniform(&local_state));
+    //         float result = 0.0f;
+    //         #pragma unroll
+    //         for (int m = 0; m < 4; m++) {
+    //             #pragma unroll
+    //             for (int n = 0; n < 32; n++) {
+    //                 result = (32 * m + n == target) ? scores(m, n) : result;
+    //             }
+    //         }
+    //         scores_subset[l] = result;
+    //     }*/
 
-        /* // 150 ms
-        float f = 3;
-        int lmax = (int) (f * curand_uniform(&local_state));
-        #pragma unroll
-        for (int l = 0; l < lmax; l++) {
-            int target = (int) (128 * curand_uniform(&local_state));
-            #pragma unroll
-            for (int m = 0; m < 4; m++) {
-                #pragma unroll
-                for (int n = 0; n < 32; n++) {
-                    if (32 * m + n == target) scores_subset[l] = scores(m, n);
-                }
-            }
-        }*/
+    //     /* // 150 ms
+    //     float f = 3;
+    //     int lmax = (int) (f * curand_uniform(&local_state));
+    //     #pragma unroll
+    //     for (int l = 0; l < lmax; l++) {
+    //         int target = (int) (128 * curand_uniform(&local_state));
+    //         #pragma unroll
+    //         for (int m = 0; m < 4; m++) {
+    //             #pragma unroll
+    //             for (int n = 0; n < 32; n++) {
+    //                 if (32 * m + n == target) scores_subset[l] = scores(m, n);
+    //             }
+    //         }
+    //     }*/
 
-        for (int l=0; l<lmax; l++){
-            //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores_subset[l], logf(p), 0};
-            if (ssw_count != 5 && p < 2) ssweights[ssw_count++] = SSWeight{scores_subset[ssw_count], logf(p), 0};
-        }
+    //     for (int l=0; l<lmax; l++){
+    //         //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores_subset[l], logf(p), 0};
+    //         if (ssw_count != 5 && p < 2) ssweights[ssw_count++] = SSWeight{scores_subset[ssw_count], logf(p), 0};
+    //     }
 
-        /*//#pragma unroll
-        //for (int l = 0; l < 1; ++l) {
-            int ind = (int) (10 * curand_uniform(&local_state));
-            int ind1 = (int) (10 * curand_uniform(&local_state));
-            float sel = 0, sel1 = 0;
-            for (int mi = 0; mi < size<0>(scores); ++mi) {
-                for (int i = 0; i < size<1>(scores)/4; ++i) {
-                    for (int j = 0; j < 4; ++j) {
-                        int ni = 4 * i + j;
-                        float score = scores(mi, ni);
-                        //p += score; // / 1024;
-                        if (score > .5) {
-                            selected[32 * mi + ni] += score;
-                            p += score;
-                        }
-                        sel = (ni == ind)? score : sel;
-                        sel1 = (ni == ind1)? score : sel1;
-                        //sel = (ni == ind)? selected[32 * mi + ni] : sel;
-                    }
-                }
-            }
-            p = p + sel;// + selected[5];
-            if (ssw_count != 5) ssweights[ssw_count++] = SSWeight{sel, logf(p), 0};
-        //}*/
+    //     /*//#pragma unroll
+    //     //for (int l = 0; l < 1; ++l) {
+    //         int ind = (int) (10 * curand_uniform(&local_state));
+    //         int ind1 = (int) (10 * curand_uniform(&local_state));
+    //         float sel = 0, sel1 = 0;
+    //         for (int mi = 0; mi < size<0>(scores); ++mi) {
+    //             for (int i = 0; i < size<1>(scores)/4; ++i) {
+    //                 for (int j = 0; j < 4; ++j) {
+    //                     int ni = 4 * i + j;
+    //                     float score = scores(mi, ni);
+    //                     //p += score; // / 1024;
+    //                     if (score > .5) {
+    //                         selected[32 * mi + ni] += score;
+    //                         p += score;
+    //                     }
+    //                     sel = (ni == ind)? score : sel;
+    //                     sel1 = (ni == ind1)? score : sel1;
+    //                     //sel = (ni == ind)? selected[32 * mi + ni] : sel;
+    //                 }
+    //             }
+    //         }
+    //         p = p + sel;// + selected[5];
+    //         if (ssw_count != 5) ssweights[ssw_count++] = SSWeight{sel, logf(p), 0};
+    //     //}*/
 
-        /*ind = (int) (10 * curand_uniform(&local_state));
-        sel = 0;
-        for (int mi = 0; mi < size<0>(scores); ++mi) {
-            for (int i = 0; i < size<1>(scores)/4; ++i) {
-                for (int j = 0; j < 4; ++j) {
-                    int ni = 4 * i + j;
-                    float score = scores(mi, ni);
-                    //p += score; // / 1024;
-                    if (score > .5) {
-                        selected[32 * mi + ni] += score;
-                        p += score;
-                    }
-                    sel = (ni == ind)? score : sel;
-                }
-            }
-        }
-        p = p + sel + selected[5];
-        if (ssw_count != 5) ssweights[ssw_count++] = SSWeight{sel, logf(p), 0};*/
+    //     /*ind = (int) (10 * curand_uniform(&local_state));
+    //     sel = 0;
+    //     for (int mi = 0; mi < size<0>(scores); ++mi) {
+    //         for (int i = 0; i < size<1>(scores)/4; ++i) {
+    //             for (int j = 0; j < 4; ++j) {
+    //                 int ni = 4 * i + j;
+    //                 float score = scores(mi, ni);
+    //                 //p += score; // / 1024;
+    //                 if (score > .5) {
+    //                     selected[32 * mi + ni] += score;
+    //                     p += score;
+    //                 }
+    //                 sel = (ni == ind)? score : sel;
+    //             }
+    //         }
+    //     }
+    //     p = p + sel + selected[5];
+    //     if (ssw_count != 5) ssweights[ssw_count++] = SSWeight{sel, logf(p), 0};*/
         
-        //if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
-        //if (ssw_count != 50 && p != 0) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
-        //if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
-        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
-        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[ssw_count], logf(p), 0};
-        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
-        if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
-        //if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{shared_selected[5], logf(p), 0};
-        //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores(0, ssw_count), logf(p), 0};
-        //if (thread(0, PRINT_BID)) printf("m = %d\n", m);
-        /*SumOp<float> sum_op;
-        quad_allreduce_(row_sum_tot, row_sum, sum_op);
-        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());*/
-        //const int k = 4; //16; //8; //6; //1; //2; //4;
-        /*float4 rand_vals0 = curand_uniform4(&state);
-        float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};*/
-        ///*
-        /*float rand_vals[k];
-        #pragma unroll
-        for (int i = 0; i < k/4; ++i) {
-            float4 rand_vals0 = curand_uniform4(&state);
-            int i4 = i * 4;
-            rand_vals[i4] = rand_vals0.x;
-            rand_vals[i4 + 1] = rand_vals0.y;
-            rand_vals[i4 + 2] = rand_vals0.z;
-            rand_vals[i4 + 3] = rand_vals0.w;
-        }//*/
-        //return;
-        #if 0
-        #pragma unroll
-        //for (int mi = 0; mi < size<0>(scores); ++mi) {
-        for (int mi = 0; mi < 4; ++mi) {
-            //float row_max_mi = row_max(mi);
-            //float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+    //     //if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
+    //     //if (ssw_count != 50 && p != 0) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+    //     //if (ssw_count != 50 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+    //     //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{p, logf(p), 0};
+    //     //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[ssw_count], logf(p), 0};
+    //     //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+    //     if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{selected[5], logf(p), 0};
+    //     //if (ssw_count != 5 && p > 1e-5) ssweights[ssw_count++] = SSWeight{shared_selected[5], logf(p), 0};
+    //     //if (ssw_count != 5 && p > 1) ssweights[ssw_count++] = SSWeight{scores(0, ssw_count), logf(p), 0};
+    //     //if (thread(0, PRINT_BID)) printf("m = %d\n", m);
+    //     /*SumOp<float> sum_op;
+    //     quad_allreduce_(row_sum_tot, row_sum, sum_op);
+    //     auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());*/
+    //     //const int k = 4; //16; //8; //6; //1; //2; //4;
+    //     /*float4 rand_vals0 = curand_uniform4(&state);
+    //     float rand_vals[4] = {rand_vals0.x, rand_vals0.y, rand_vals0.z, rand_vals0.w};*/
+    //     ///*
+    //     /*float rand_vals[k];
+    //     #pragma unroll
+    //     for (int i = 0; i < k/4; ++i) {
+    //         float4 rand_vals0 = curand_uniform4(&state);
+    //         int i4 = i * 4;
+    //         rand_vals[i4] = rand_vals0.x;
+    //         rand_vals[i4 + 1] = rand_vals0.y;
+    //         rand_vals[i4 + 2] = rand_vals0.z;
+    //         rand_vals[i4 + 3] = rand_vals0.w;
+    //     }//*/
+    //     //return;
+    //     #if 0
+    //     #pragma unroll
+    //     //for (int mi = 0; mi < size<0>(scores); ++mi) {
+    //     for (int mi = 0; mi < 4; ++mi) {
+    //         //float row_max_mi = row_max(mi);
+    //         //float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
 
-            float p = 0;
-            /*float selected_scores[32];
-            int iss = 0;
-            int m = 0;*/
-            int ki_max = size<1>(scores) / k;
-            #pragma unroll
-            for (int ki = 0; ki < ki_max; ++ki) {
-                //if (ssw_count >= ssw_size - k) continue;
-                #pragma unroll
-                for (int i = 0; i < k; ++i) {
-                    //float rand_val = rand_vals[i];
-                    int ni = k * ki + i;
-                    float score = scores(mi, ni);
-                    p += logf(score);
-                    //if (score > row_sum_tot_mi_oc * rand_val) {
-                    //    p += logf(score);
-                        /*//ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
-                        selected_scores[iss++] = score;
-                        m += (1 << ni); continue;
-                        score = logf(score) + row_max_mi;
-                        float log_rand = logf(rand_val);
-                        char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
-                        auto coord = tcaccs_lo(mi, ni);
-                        int col = get<1>(coord);
-                        //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
-                        ssweights[ssw_count++] = SSWeight{score, log_rand, row};*/
-                    //}
-                }
-            }
-            if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
-        }
-        #endif
-    };
+    //         float p = 0;
+    //         /*float selected_scores[32];
+    //         int iss = 0;
+    //         int m = 0;*/
+    //         int ki_max = size<1>(scores) / k;
+    //         #pragma unroll
+    //         for (int ki = 0; ki < ki_max; ++ki) {
+    //             //if (ssw_count >= ssw_size - k) continue;
+    //             #pragma unroll
+    //             for (int i = 0; i < k; ++i) {
+    //                 //float rand_val = rand_vals[i];
+    //                 int ni = k * ki + i;
+    //                 float score = scores(mi, ni);
+    //                 p += logf(score);
+    //                 //if (score > row_sum_tot_mi_oc * rand_val) {
+    //                 //    p += logf(score);
+    //                     /*//ssweights[ssw_count++] = SSWeight{.1, .1, 0}; continue;
+    //                     selected_scores[iss++] = score;
+    //                     m += (1 << ni); continue;
+    //                     score = logf(score) + row_max_mi;
+    //                     float log_rand = logf(rand_val);
+    //                     char row = mi; // later, when moving to global memory, should be replaced with get<0>(coord)
+    //                     auto coord = tcaccs_lo(mi, ni);
+    //                     int col = get<1>(coord);
+    //                     //ssweights[ssw_count++] = SSWeight{score, log_rand, row, col};
+    //                     ssweights[ssw_count++] = SSWeight{score, log_rand, row};*/
+    //                 //}
+    //             }
+    //         }
+    //         if (p != 0 && ssw_count == 0) ssweights[ssw_count++] = SSWeight{p, p, 0};
+    //     }
+    //     #endif
+    // };
 
     template <typename Tensor1>
     __device__ void filter_ssweights (Tensor1 &row_max, Tensor1 &row_sum) {
+        #if VERBAL0
         if (thread(0, PRINT_BID)) {
             printf("ssw_count: %d\n", ssw_count);
             //if (ssw_count) printf("%f\n", (float)ssweights[ssw_count-1].score);
             if (ssw_count) printf("%f\n", (float)ssweights0[ssw_count-1].score);
         }
+        #endif
         //if (ssw_count + 10 < ssw_size) return;
         return;
         // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
@@ -1127,7 +1025,41 @@ public:
             if (i < j) ssweights[i] = ssweights[j];
             i++;
         }
-        #if 1
+        #if VERBAL0
+        if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
+        #endif
+        ssw_count = i;
+    };
+
+    template <typename Tensor1>
+    __device__ void filter_ssweights0 (Tensor1 &row_max, Tensor1 &row_sum) {
+        #if VERBAL0
+        if (thread(0, PRINT_BID)) {
+            printf("ssw_count: %d\n", ssw_count);
+            if (ssw_count) printf("%f\n", (float)ssweights0[ssw_count-1].score);
+        }
+        #endif
+        //return;
+        // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
+        // log_c + log_score - log_row_sum - row_max vs log_rand, or
+        // log_score - log_rand vs log_row_sum + row_max - log_c
+        float log_c = logf(c);
+        float log_2 = logf(2);
+        Tensor1 del_log;
+        for (int i = 0; i < size<0>(del_log); ++i) {
+            //del_log(i) = logf(row_sum(i)) + row_max(i) - log_c;
+            del_log(i) = logf(row_sum_tot(i)) + row_max(i) - log_c;
+        }
+        int i = 0;
+        for (int j = 0; j < ssw_count; ++j) {
+            auto ssw = ssweights0[j];
+            //if (thread(0, PRINT_BID)) printf("score  = %f log_rand = %f del_log = %f\n", ssw.score,(float)ssw.log_rand, del_log(ssw.row));
+            // if weight should be skipped, continue
+            if (ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue;
+            if (i < j) ssweights0[i] = ssweights0[j];
+            i++;
+        }
+        #if VERBAL0
         if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
         #endif
         ssw_count = i;
@@ -1144,34 +1076,6 @@ struct Softmax {
     TensorT row_max, row_sum;
 
     __forceinline__ __device__ Softmax() {};
-    /*__forceinline__ __device__ Softmax() {
-        my_print_test();
-    }*/
-
-    /*__device__ void my_print_test() {
-        __shared__ int print_lock;
-        if (threadIdx.x == 0) print_lock = 0;
-        __syncthreads();
-        //if (thread0()) {
-        //    print(row_max);
-        //}
-        for (int i=0; i<30; i++) {
-            //if (thread(0, i * i)) {
-            if (thread(i * i, 0)) {
-                bool printed = false;
-                while (!printed) {
-                    if (atomicCAS(&print_lock, 0, 1) == 0) {
-                        print(row_max);
-                        printf("block %d thread %d\n", blockIdx.x, threadIdx.x);
-                        __threadfence();
-                        print_lock = 0;
-                        printed = true;
-                    }
-                    __nanosleep(100);
-                }
-            }
-        }
-    };*/
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
@@ -1283,6 +1187,10 @@ struct Softmax_c : public Softmax<kNRows> {
         //__syncthreads();
         //*/
         
+    };
+
+    __device__ void ss_final () {
+        ss.filter_ssweights0(row_max, row_sum);
     };
 
 }; 
