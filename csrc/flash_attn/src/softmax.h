@@ -201,7 +201,7 @@ __device__ __forceinline__ float float2rand (const float& x, const int k = 16) {
 template <int kNRows, typename Kernel_traits>
 struct StochSparse {
 
-    const float c = 5; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float c = 10; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
     float overc = 1. / c;
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
@@ -221,6 +221,8 @@ struct StochSparse {
     curandStatePhilox4_32_10_t state;
 
     float scores_subset[10];
+    float row_maxs[600];
+    int rmi = 0;
 
 private:
 
@@ -591,7 +593,7 @@ public:
         unsigned int rand_count = ni_max;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
-            float row_max_mi = row_max(mi);
+            //float row_max_mi = row_max(mi);
             float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
             #pragma unroll
             for (int ni = 0; ni < size<1>(scores); ++ni) {
@@ -612,10 +614,11 @@ public:
         // }
         // #endif
 
-        #if 0 // USE THIS BLOCK FOR H200
+        #if 0 // USE THIS BLOCK FOR H200 (incomplete)
         unsigned int rand_count0 = rand_count - mi_max * ni_max;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
+            //float row_max_mi = row_max(mi);
             unsigned int bits = m[mi];
             int ni = -1;
             while (bits && ssw_count < ssw_size) {
@@ -624,7 +627,8 @@ public:
                 bits >>= i;
                 float score = get_score_predicated_mi(scores, mi, ni);
                 //float score = get_score_predicated1(scores, mi, ni);
-                score = logf(score) + row_max_mi;
+                //float score = get_score_predicated2(scores, row_max, mi, ni);
+                //score = logf(score) + row_max_mi;
                 char log_rand = __builtin_ffs(rand_count0 + ni);
                 auto coord = tcaccs_lo(mi, ni);
                 short col = get<1>(coord);
@@ -641,7 +645,6 @@ public:
         unsigned int rand_count0 = rand_count - mi_max * ni_max; 
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
-            float row_max_mi = row_max(mi);
             unsigned int bits = m[mi];
             int ssi = 0;
             int ni = -1;
@@ -653,6 +656,7 @@ public:
                 //float score = get_score_predicated1(scores, mi, ni);
                 selected_scores[ssi++] = get_score_predicated_mi(scores, mi, ni);
             }
+            float row_max_mi = row_max(mi);
             bits = m[mi];
             ni = -1;
             for (int j = 0; j < ssi; j++) {
@@ -670,6 +674,42 @@ public:
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
             rand_count0 += ni_max;
         }
+        #endif
+
+        #if 0 // experimental
+        int ssw_count0 = ssw_count;
+        unsigned int rand_count0 = rand_count - mi_max * ni_max;
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            //float row_max_mi = row_max(mi);
+            unsigned int bits = m[mi];
+            int ni = -1;
+            while (bits && ssw_count < ssw_size) {
+                int i = __builtin_ffs(bits);
+                ni += i;
+                bits >>= i;
+                float score = get_score_predicated_mi(scores, mi, ni);
+                //float score = get_score_predicated1(scores, mi, ni);
+                //float score = get_score_predicated2(scores, row_max, mi, ni);
+                //score = logf(score) + row_max_mi;
+                score = logf(score);
+                char log_rand = __builtin_ffs(rand_count0 + ni);
+                auto coord = tcaccs_lo(mi, ni);
+                short col = get<1>(coord);
+                ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+            }
+            //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+                //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
+            rand_count0 += ni_max;
+        }
+        #if 0
+        // this is needed if we postpone adding row_max to logf(score) 
+        if (ssw_count != ssw_count0) {
+            #pragma unroll
+            for (int mi = 0; mi < mi_max; ++mi) row_maxs[rmi + mi] = row_max(mi);
+            rmi += mi_max;
+        }
+        #endif
         #endif
 
         #if VERBAL
@@ -704,9 +744,11 @@ public:
             result = (n == ni) ? scores(mi, n) : result;
         }
         return result;
+        //return logf(result);
     };
 
-    /*template <int mi, typename Tensor0>
+    /*
+    template <int mi, typename Tensor0>
     __device__ float get_score_predicated_mi1 (Tensor0 &scores, int ni) {
         float result = 0.0f;
         #pragma unroll
@@ -714,6 +756,7 @@ public:
             result = (n == ni) ? scores(mi, n) : result;
         }
         return result;
+        //return logf(result);// + row_max(mi);
     };
 
     template <typename Tensor0>
@@ -723,6 +766,17 @@ public:
             case 1: return get_score_predicated_mi1<1>(scores, ni);
             case 2: return get_score_predicated_mi1<2>(scores, ni);
             case 3: return get_score_predicated_mi1<3>(scores, ni);
+        }
+        return 0;
+    };//*/
+
+    /*template <typename Tensor0, typename Tensor1>
+    __device__ float get_score_predicated2 (Tensor0 &scores, Tensor1 &row_max, int mi, int ni) {
+        switch (mi) {
+            case 0: return get_score_predicated_mi1<0>(scores, ni) + row_max(0);
+            case 1: return get_score_predicated_mi1<1>(scores, ni) + row_max(1);
+            case 2: return get_score_predicated_mi1<2>(scores, ni) + row_max(2);
+            case 3: return get_score_predicated_mi1<3>(scores, ni) + row_max(3);
         }
         return 0;
     };*/
@@ -1056,6 +1110,7 @@ public:
             //if (thread(0, PRINT_BID)) printf("score  = %f log_rand = %f del_log = %f\n", ssw.score,(float)ssw.log_rand, del_log(ssw.row));
             // if weight should be skipped, continue
             if (ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue;
+            //if (row_maxs[j] + ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue; // undo
             if (i < j) ssweights0[i] = ssweights0[j];
             i++;
         }
