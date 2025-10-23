@@ -1123,6 +1123,61 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+/*struct StochSparse {
+
+    const float c = 10; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    float overc = 1. / c;
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_sum_tot;
+
+    static constexpr int kBlockM = Kernel_traits::kBlockM;
+    static constexpr int kBlockN = Kernel_traits::kBlockN;
+
+    //static constexpr int ssw_size = 2 * kBlockN;
+
+    //SSWeight ssweights [2 * kBlockN];
+    SSWeight ssweights [ssw_size];
+    SSWeight0 ssweights0 [ssw_size];
+    int ssw_count = 0;
+
+    curandState local_state;
+    curandStatePhilox4_32_10_t state;
+
+    float scores_subset[10];
+    float row_maxs[600];
+    int rmi = 0;*/
+
+struct SparseIndexTracker {
+
+    static constexpr int mi_max = 4;
+    static constexpr int store_size = 32 * 4 * 4; //256; //32;
+
+    //float log_row_sum[32 * 4 * 4];
+    float log_row_sum[store_size];
+    float ms[store_size];
+    int count = 0;
+
+    template <typename Tensor1>
+    __device__ void store_log_row_sum (Tensor1 &row_max, Tensor1 &row_sum) {
+        #pragma unroll
+        for (int mi = 0; mi < mi_max; ++mi) {
+            log_row_sum[count + mi] = row_sum(mi);
+            ms[count + mi] = row_max(mi);
+        }
+        count += mi_max;
+        //count %= store_size;
+    };
+
+    __device__ void final () {
+        float s = 0.0f;
+        for (int i = 0; i < count; i++) s += log_row_sum[i];
+        if (thread(0, PRINT_BID)) printf("s = %f\n", s);
+    };
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <int kNRows>
 struct Softmax {
@@ -1194,6 +1249,7 @@ struct Softmax_c : public Softmax<kNRows> {
     TensorT row_max, row_sum;
 
     StochSparse<kNRows, Kernel_traits> ss;
+    SparseIndexTracker sit;
 
     __device__ Softmax_c() {};
 
@@ -1222,6 +1278,10 @@ struct Softmax_c : public Softmax<kNRows> {
                     : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
                 float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
                 row_sum(mi) *= scores_scale;
+                /*if (thread(0, PRINT_BID)) {
+                    printf("c_bound = %f\n", (row_sum(mi) + 1));
+                    if (mi == 3) printf("\n");
+                }*/
                 #pragma unroll
                 for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scores_scale; }
             }
@@ -1230,8 +1290,10 @@ struct Softmax_c : public Softmax<kNRows> {
             // We do that reduce at the end when we need to normalize the softmax.
             FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
             //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
+            //sit.store_log_row_sum(row_sum);
         }
-        ///*
+        sit.store_log_row_sum(row_max, row_sum);
+        /*
         //ss.original_coordinates(acc_s);
         //__syncthreads();
         //ss.store_ssweights(scores, row_max, row_sum);
@@ -1245,7 +1307,8 @@ struct Softmax_c : public Softmax<kNRows> {
     };
 
     __device__ void ss_final () {
-        ss.filter_ssweights0(row_max, row_sum);
+        //ss.filter_ssweights0(row_max, row_sum);
+        sit.final();
     };
 
 }; 
