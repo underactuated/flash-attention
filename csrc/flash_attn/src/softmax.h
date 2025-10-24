@@ -241,6 +241,8 @@ public:
     decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
 
     __device__ StochSparse() {
+        //if (threadIdx.x == 0 && blockIdx.x == 0) {printf("MODIFIED VERSION RUNNING\n");} // temp
+        if (thread0()) {printf("MODIFIED VERSION RUNNING\n");} // temp
         #if 0
         constexpr int kBlockM = Kernel_traits::kBlockM;
         constexpr int kBlockN = Kernel_traits::kBlockN;
@@ -1249,7 +1251,31 @@ struct Softmax_c : public Softmax<kNRows> {
     TensorT row_max, row_sum;
 
     StochSparse<kNRows, Kernel_traits> ss;
-    SparseIndexTracker sit;
+    //SparseIndexTracker sit;
+
+#if 0
+//-----------------
+    static constexpr int mi_max = 4;
+    static constexpr int store_size = 256; //32; //32 * 4 * 4; //256; //32;
+
+    //float log_row_sum[32 * 4 * 4];
+    float log_row_sum[store_size];
+    float ms[store_size];
+    int count = 0;
+    //static constexpr int N = size(row_sum);
+
+    /*//template <typename Tensor1>
+    __device__ void store_log_row_sum () {//(Tensor1 &row_max, Tensor1 &row_sum) {
+        #pragma unroll
+        for (int mi = 0; mi < mi_max; ++mi) {
+            log_row_sum[count + mi] = row_sum(mi);
+            ms[count + mi] = row_max(mi);
+        }
+        count += mi_max;
+        //count %= store_size;
+    };*/
+//-----------------
+#endif
 
     __device__ Softmax_c() {};
 
@@ -1284,6 +1310,8 @@ struct Softmax_c : public Softmax<kNRows> {
                 }*/
                 #pragma unroll
                 for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scores_scale; }
+                //log_row_sum[count + mi] = row_sum(mi); // exper
+                //ms[count + mi] = row_max(mi); // exper
             }
             FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
             // We don't do the reduce across threads here since we don't need to use the row_sum.
@@ -1291,9 +1319,12 @@ struct Softmax_c : public Softmax<kNRows> {
             FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
             //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
             //sit.store_log_row_sum(row_sum);
+            //auto dest_view = make_tensor(log_row_sum + count, make_layout(4));
+            //cute::copy(row_sum, dest_view);
+            //count = (count + mi_max) % store_size; // exper
         }
-        sit.store_log_row_sum(row_max, row_sum);
-        /*
+        //sit.store_log_row_sum(row_max, row_sum);
+        ///*
         //ss.original_coordinates(acc_s);
         //__syncthreads();
         //ss.store_ssweights(scores, row_max, row_sum);
@@ -1307,8 +1338,8 @@ struct Softmax_c : public Softmax<kNRows> {
     };
 
     __device__ void ss_final () {
-        //ss.filter_ssweights0(row_max, row_sum);
-        sit.final();
+        ss.filter_ssweights0(row_max, row_sum);
+        //sit.final();
     };
 
 }; 
