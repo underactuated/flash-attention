@@ -65,6 +65,11 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     const bool is_even_MN = params.cu_seqlens_q == nullptr && params.cu_seqlens_k == nullptr && params.seqlen_k % Kernel_traits::kBlockN == 0 && params.seqlen_q % Kernel_traits::kBlockM == 0;
     const bool is_even_K = params.d == Kernel_traits::kHeadDim;
     const bool return_softmax = params.p_ptr != nullptr;
+    ///////////// global memory test ////////////
+    int store_size = 32 * 32;
+    size_t total_threads = grid.x * grid.y * grid.z * Kernel_traits::kNThreads;
+    cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
+    /////////////////////////////////////////////
     BOOL_SWITCH(is_even_MN, IsEvenMNConst, [&] {
         EVENK_SWITCH(is_even_K, IsEvenKConst, [&] {
             LOCAL_SWITCH((params.window_size_left >= 0 || params.window_size_right >= 0) && !Is_causal, Is_local, [&] {

@@ -1153,19 +1153,29 @@ public:
 struct SparseIndexTracker {
 
     static constexpr int mi_max = 4;
-    static constexpr int store_size = 32 * 4 * 4; //256; //32;
+    static constexpr int store_size = 2 * 32 * 16; //8; //32; //32 * 4 * 4; //256; //32;
 
     //float log_row_sum[32 * 4 * 4];
-    float log_row_sum[store_size];
-    float ms[store_size];
+    /*float log_row_sum[store_size];
+    float ms[store_size];*/
     int count = 0;
+
+    // ss = 32*16 mc = 0 ok
+    // ss = 32*16 mc = 4 ok
+    // ss = 32*16 mc = 8 nok
+    // ss = 8 mc = 8 nok
+    // ss = 32 * 32 mc = 4 nok, but less
 
     template <typename Tensor1>
     __device__ void store_log_row_sum (Tensor1 &row_max, Tensor1 &row_sum) {
+        //return;
+        //if (count >= store_size) return;
+        if (count >= 8) return;
         #pragma unroll
         for (int mi = 0; mi < mi_max; ++mi) {
-            log_row_sum[count + mi] = row_sum(mi);
-            ms[count + mi] = row_max(mi);
+            /*log_row_sum[count + mi] = row_sum(mi);
+            ms[count + mi] = row_max(mi);*/
+            //if (thread(0, PRINT_BID)) printf("rs = %f rm = %f\n", row_sum(mi), row_max(mi));
         }
         count += mi_max;
         //count %= store_size;
@@ -1173,7 +1183,7 @@ struct SparseIndexTracker {
 
     __device__ void final () {
         float s = 0.0f;
-        for (int i = 0; i < count; i++) s += log_row_sum[i];
+        //for (int i = 0; i < count; i++) s += (log_row_sum[i] + ms[i]);
         if (thread(0, PRINT_BID)) printf("s = %f\n", s);
     };
 
@@ -1250,8 +1260,8 @@ struct Softmax_c : public Softmax<kNRows> {
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
-    StochSparse<kNRows, Kernel_traits> ss;
-    //SparseIndexTracker sit;
+    //StochSparse<kNRows, Kernel_traits> ss;
+    SparseIndexTracker sit;
 
 #if 0
 //-----------------
@@ -1323,23 +1333,23 @@ struct Softmax_c : public Softmax<kNRows> {
             //cute::copy(row_sum, dest_view);
             //count = (count + mi_max) % store_size; // exper
         }
-        //sit.store_log_row_sum(row_max, row_sum);
-        ///*
+        sit.store_log_row_sum(row_max, row_sum);
+        /*
         //ss.original_coordinates(acc_s);
         //__syncthreads();
         //ss.store_ssweights(scores, row_max, row_sum);
         //ss.store_ssweights_test(scores, row_max, row_sum);
         ss.store_ssweights_test0(scores, row_max, row_sum);
         //__syncthreads();
-        ss.filter_ssweights(row_max, row_sum);
+        //ss.filter_ssweights(row_max, row_sum);
         //__syncthreads();
         //*/
         
     };
 
     __device__ void ss_final () {
-        ss.filter_ssweights0(row_max, row_sum);
-        //sit.final();
+        //ss.filter_ssweights0(row_max, row_sum);
+        sit.final();
     };
 
 }; 
