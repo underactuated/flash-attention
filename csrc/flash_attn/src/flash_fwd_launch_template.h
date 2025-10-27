@@ -66,9 +66,23 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     const bool is_even_K = params.d == Kernel_traits::kHeadDim;
     const bool return_softmax = params.p_ptr != nullptr;
     ///////////// global memory test ////////////
-    int store_size = 32 * 32;
+    int store_size = 32; //32 * 32;
+    static_assert(Kernel_traits::kNThreads == 128);
     size_t total_threads = grid.x * grid.y * grid.z * Kernel_traits::kNThreads;
     cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
+    /*if (params.d_row_sum == nullptr) {
+        cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
+    }*/
+    /*cudaError_t err = cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
+
+    if (err != cudaSuccess) {
+        printf("cudaMalloc FAILED: %s\n", cudaGetErrorString(err));
+        printf("Tried to allocate: %zu bytes\n", total_threads * store_size * sizeof(float));
+        return;  // or handle error
+    }
+    
+    printf("cudaMalloc SUCCESS: allocated %zu bytes at address %p\n", 
+       total_threads * store_size * sizeof(float), params.d_row_sum);*/
     /////////////////////////////////////////////
     BOOL_SWITCH(is_even_MN, IsEvenMNConst, [&] {
         EVENK_SWITCH(is_even_K, IsEvenKConst, [&] {
@@ -101,6 +115,10 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
             });
         });
     });
+    // SYNCHRONIZE HERE
+    cudaStreamSynchronize(stream);
+    // FREE HERE
+    cudaFree(params.d_row_sum);
 }
 
 template<typename Kernel_traits, bool Is_causal>
