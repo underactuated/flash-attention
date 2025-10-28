@@ -65,6 +65,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     const bool is_even_MN = params.cu_seqlens_q == nullptr && params.cu_seqlens_k == nullptr && params.seqlen_k % Kernel_traits::kBlockN == 0 && params.seqlen_q % Kernel_traits::kBlockM == 0;
     const bool is_even_K = params.d == Kernel_traits::kHeadDim;
     const bool return_softmax = params.p_ptr != nullptr;
+    #if 0
     ///////////// global memory test ////////////
     int store_size = 32; //32 * 32;
     static_assert(Kernel_traits::kNThreads == 128);
@@ -84,6 +85,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     printf("cudaMalloc SUCCESS: allocated %zu bytes at address %p\n", 
        total_threads * store_size * sizeof(float), params.d_row_sum);*/
     /////////////////////////////////////////////
+    #endif
     BOOL_SWITCH(is_even_MN, IsEvenMNConst, [&] {
         EVENK_SWITCH(is_even_K, IsEvenKConst, [&] {
             LOCAL_SWITCH((params.window_size_left >= 0 || params.window_size_right >= 0) && !Is_causal, Is_local, [&] {
@@ -115,10 +117,10 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
             });
         });
     });
-    // SYNCHRONIZE HERE
+    /*// SYNCHRONIZE HERE
     cudaStreamSynchronize(stream);
     // FREE HERE
-    cudaFree(params.d_row_sum);
+    cudaFree(params.d_row_sum);*/
 }
 
 template<typename Kernel_traits, bool Is_causal>
@@ -212,6 +214,7 @@ void run_mha_fwd_hdim64(Flash_fwd_params &params, cudaStream_t stream) {
             // Using 8 warps is 18% slower for seqlen=2k, 2 warps is 5% slower
             // Using block size (64 x 256) is 27% slower for seqlen=2k
             // Using block size (256 x 64) is 85% slower for seqlen=2k, because of register spilling
+            //run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, false, false, T>, Is_dropout, Is_causal>(params, stream); // my test
             run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 128, 4, false, false, T>, Is_dropout, Is_causal>(params, stream);
             // run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, true, false, T>, Is_dropout, Is_causal>(params, stream);
             // run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, true, true, T>, Is_dropout, Is_causal>(params, stream);
