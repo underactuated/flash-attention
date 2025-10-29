@@ -224,6 +224,8 @@ struct StochSparse {
     float row_maxs[600];
     int rmi = 0;
 
+    unsigned int msum = 0;
+
 private:
 
     __host__ __device__ static auto get_tcaccs() {
@@ -242,7 +244,7 @@ public:
 
     __device__ StochSparse() {
         //if (threadIdx.x == 0 && blockIdx.x == 0) {printf("MODIFIED VERSION RUNNING\n");} // temp
-        if (thread0()) {printf("MODIFIED VERSION RUNNING\n");} // temp
+        //if (thread0()) {printf("MODIFIED VERSION RUNNING\n");} // temp
         #if 0
         constexpr int kBlockM = Kernel_traits::kBlockM;
         constexpr int kBlockN = Kernel_traits::kBlockN;
@@ -648,6 +650,7 @@ public:
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             unsigned int bits = m[mi];
+            msum += bits; // temp expriment to remove
             int ssi = 0;
             int ni = -1;
             while (bits && ssw_count < ssw_size) {
@@ -1093,6 +1096,7 @@ public:
         if (thread(0, PRINT_BID)) {
             printf("ssw_count: %d\n", ssw_count);
             if (ssw_count) printf("%f\n", (float)ssweights0[ssw_count-1].score);
+            printf("msum = %u\n", msum);
         }
         #endif
         //return;
@@ -1161,13 +1165,14 @@ struct SparseIndexTracker {
     TensorT row_sum_tot;
 
     static constexpr int mi_max = 4;
-    static constexpr int store_size = 32; //32 * 32; //8; //32; //32 * 4 * 4; //256; //32;
+    static constexpr int store_size = 32 * 32; //32 * 8; //16; //32; //32 * 32; //8; //32; //32 * 4 * 4; //256; //32;
 
     //__shared__ float shared_buffer[128][32];  // [threads][buffer_size]
 
     //float log_row_sum[32 * 4 * 4];
-    /*float log_row_sum[store_size];
-    float ms[store_size];*/
+    ///*
+    float log_row_sum[store_size];
+    float ms[store_size];//*/
     int count = 0;
     float s = 0.0f;
 
@@ -1178,6 +1183,8 @@ struct SparseIndexTracker {
     // ss = 32 * 32 mc = 4 nok, but less
 
     int thread_offset;
+
+    unsigned int msum = 0;
 
     __device__ SparseIndexTracker () {
         // At the start of your kernel or in your struct's constructor:
@@ -1226,11 +1233,13 @@ struct SparseIndexTracker {
         //float s = 0.0f;
         //for (int i = 0; i < count; i++) s += (log_row_sum[i] + ms[i]);
         //if (thread(0, PRINT_BID)) printf("s = %f\n", s);
-        if (thread(0, PRINT_BID)) printf("count = %d\n", count);
+        if (thread(0, PRINT_BID)) printf("msum = %u s = %f\n", msum, s);
+        //if (thread(0, PRINT_BID)) printf("count = %d\n", count);
     };
 
     template <typename Tensor0, typename Tensor1>
-    __device__ void store_sparse_inds (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum, float* g_row_sum) {
+    //__device__ void store_sparse_inds (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum, float* g_row_sum) {
+    __device__ void store_sparse_inds (Tensor0 &scores, Tensor1 &row_max, Tensor1 &row_sum) {
         constexpr int mi_max = decltype(size<0>(scores))::value;
         constexpr int ni_max = decltype(size<1>(scores))::value;
         static_assert(decltype(size<0>(scores))::value == mi_max);
@@ -1254,6 +1263,12 @@ struct SparseIndexTracker {
             }
         }
 
+        //return;
+        #pragma unroll
+        for (int mi = 0; mi < mi_max; ++mi) msum += m[mi];
+        //for (int mi = 0; mi < mi_max; ++mi) s += __int_as_float(m[mi]);
+        //return;
+
         //if (thread(0, PRINT_BID)) printf("rand_count = %d\n", rand_count);
 
         // #if 0
@@ -1270,11 +1285,13 @@ struct SparseIndexTracker {
         }
         #endif
 
-        if (m[0] + m[1] + m[2] + m[3] == 0) return;
+        //if (m[0] + m[1] + m[2] + m[3] == 0) return;
 
         if (count >= store_size) return;
         //if (count >= 8) return;
-        int write_idx = thread_offset + count;
+        //int write_idx = thread_offset + count;
+
+        //if (m[0] + m[1] + m[2] + m[3] == 0) {count += (2 * mi_max); return;} // test
 
         //if (thread(0, PRINT_BID)) printf("count = %d\n", count);
         
@@ -1282,15 +1299,16 @@ struct SparseIndexTracker {
         for (int mi = 0; mi < mi_max; ++mi) {
             //shared_buffer[threadIdx.x][count + mi] = row_sum(mi);
             
-            ///*
+            /*
             float m_float = __int_as_float(m[mi]);
             g_row_sum[write_idx + mi] = m_float;//*/
             //s += __int_as_float(m[mi]);
             //s += row_sum(mi);
             //if (thread(0, PRINT_BID)) printf("rs = %f rm = %f m = %d\n", row_sum(mi), row_max(mi), m[mi]);
             
-            /*log_row_sum[count + mi] = row_sum(mi);
-            ms[count + mi] = row_max(mi);*/
+            ///*
+            log_row_sum[count + mi] = row_sum(mi);
+            ms[count + mi] = row_max(mi);//*/
             //if (thread(0, PRINT_BID)) printf("rs = %f rm = %f\n", row_sum(mi), row_max(mi));
         }
         // if (thread(0, PRINT_BID)) {
@@ -1375,8 +1393,8 @@ struct Softmax_c : public Softmax<kNRows> {
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
-    StochSparse<kNRows, Kernel_traits> ss;
-    //SparseIndexTracker<kNRows> sit;
+    //StochSparse<kNRows, Kernel_traits> ss;
+    SparseIndexTracker<kNRows> sit;
 
 #if 0
 //-----------------
@@ -1405,8 +1423,8 @@ struct Softmax_c : public Softmax<kNRows> {
     __device__ Softmax_c() {};
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
-    //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
-    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
+    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
+    //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
@@ -1451,6 +1469,7 @@ struct Softmax_c : public Softmax<kNRows> {
         }
         //sit.store_log_row_sum(row_max, row_sum, g_row_sum);
         //sit.store_sparse_inds(scores, row_max, row_sum, g_row_sum);
+        sit.store_sparse_inds(scores, row_max, row_sum);
         /*
         //ss.original_coordinates(acc_s);
         //__syncthreads();
@@ -1466,7 +1485,7 @@ struct Softmax_c : public Softmax<kNRows> {
 
     __device__ void ss_final () {
         //ss.filter_ssweights0(row_max, row_sum);
-        //sit.final();
+        sit.final();
     };
 
 }; 
