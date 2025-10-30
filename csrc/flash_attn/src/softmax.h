@@ -225,6 +225,7 @@ struct StochSparse {
     int rmi = 0;
 
     unsigned int msum = 0;
+    SSWeight0 ssw_temp {0,0,0,0};
 
 private:
 
@@ -590,6 +591,7 @@ public:
         constexpr int ni_max = decltype(size<1>(scores))::value;
         static_assert(decltype(size<0>(scores))::value == mi_max);
         //static_assert(ni_max == 16 || ni_max == 32);
+        if (rmi++ < 0) return;
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
@@ -618,11 +620,11 @@ public:
         // }
         // #endif
 
-        #if 0 // USE THIS BLOCK FOR H200 (incomplete)
+        #if 1 // USE THIS BLOCK FOR GH200 (incomplete or not?)
         unsigned int rand_count0 = rand_count - mi_max * ni_max;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
-            //float row_max_mi = row_max(mi);
+            float row_max_mi = row_max(mi);
             unsigned int bits = m[mi];
             int ni = -1;
             while (bits && ssw_count < ssw_size) {
@@ -632,7 +634,8 @@ public:
                 float score = get_score_predicated_mi(scores, mi, ni);
                 //float score = get_score_predicated1(scores, mi, ni);
                 //float score = get_score_predicated2(scores, row_max, mi, ni);
-                //score = logf(score) + row_max_mi;
+                score = logf(score) + row_max_mi;
+                //score = logf(score) + row_max(mi);
                 char log_rand = __builtin_ffs(rand_count0 + ni);
                 auto coord = tcaccs_lo(mi, ni);
                 short col = get<1>(coord);
@@ -644,7 +647,7 @@ public:
         }
         #endif
 
-        #if 1 // USE THIS BLOCK FOR A10
+        #if 0 // USE THIS BLOCK FOR A10
         float selected_scores[ni_max];
         unsigned int rand_count0 = rand_count - mi_max * ni_max; 
         #pragma unroll
@@ -682,31 +685,52 @@ public:
         #endif
 
         #if 0 // experimental
-        int ssw_count0 = ssw_count;
+        //int ssw_count0 = ssw_count;
         unsigned int rand_count0 = rand_count - mi_max * ni_max;
+        //SSWeight0 ssw_temp{0,0,0,0};
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
-            //float row_max_mi = row_max(mi);
+            float row_max_mi = row_max(mi);
             unsigned int bits = m[mi];
             int ni = -1;
+            bool write = ssw_temp.score && bits;
+            write = __any_sync(0xFFFFFFFF, write);
+            if (ssw_temp.score && write) {
+                ssweights0[ssw_count++] = ssw_temp;
+                ssw_temp.score = 0;
+            }
+            // if (buffer && bits) {broadcast signal;}
+            // if (buffer && signal) {empty buffer;}
+            // or:
+            // if (buffer) {
+            //     if (bits) {broadcase signal;}
+            //     if (signal) {empty buffer;}
+            // }
             while (bits && ssw_count < ssw_size) {
+                if (ssw_temp.score) ssweights0[ssw_count++] = ssw_temp;
+                // if (buffer) {empty_buffer;}
                 int i = __builtin_ffs(bits);
                 ni += i;
                 bits >>= i;
                 float score = get_score_predicated_mi(scores, mi, ni);
                 //float score = get_score_predicated1(scores, mi, ni);
                 //float score = get_score_predicated2(scores, row_max, mi, ni);
-                //score = logf(score) + row_max_mi;
-                score = logf(score);
+                score = logf(score) + row_max_mi;
                 char log_rand = __builtin_ffs(rand_count0 + ni);
                 auto coord = tcaccs_lo(mi, ni);
                 short col = get<1>(coord);
-                ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+                //ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+                ssw_temp = SSWeight0{score, log_rand, (char)mi, col};
+                // buffer = ssweight0{};
             }
             //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
             rand_count0 += ni_max;
         }
+        /*if (ssw_temp.score) {
+            ssweights0[ssw_count++] = ssw_temp;
+            ssw_temp.score = 0;
+        }*/
         #if 0
         // this is needed if we postpone adding row_max to logf(score) 
         if (ssw_count != ssw_count0) {
@@ -1099,6 +1123,7 @@ public:
             printf("msum = %u\n", msum);
         }
         #endif
+        //if (threadIdx.x == 0 && ssw_count > 90) printf("bid = %d ssw_count = %d\n", blockIdx.x, ssw_count);
         //return;
         // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
         // log_c + log_score - log_row_sum - row_max vs log_rand, or
@@ -1165,7 +1190,7 @@ struct SparseIndexTracker {
     TensorT row_sum_tot;
 
     static constexpr int mi_max = 4;
-    static constexpr int store_size = 32 * 32; //32 * 8; //16; //32; //32 * 32; //8; //32; //32 * 4 * 4; //256; //32;
+    static constexpr int store_size = 32 * 0; //32 * 8; //16; //32; //32 * 32; //8; //32; //32 * 4 * 4; //256; //32;
 
     //__shared__ float shared_buffer[128][32];  // [threads][buffer_size]
 
@@ -1393,8 +1418,8 @@ struct Softmax_c : public Softmax<kNRows> {
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
-    //StochSparse<kNRows, Kernel_traits> ss;
-    SparseIndexTracker<kNRows> sit;
+    StochSparse<kNRows, Kernel_traits> ss;
+    //SparseIndexTracker<kNRows> sit;
 
 #if 0
 //-----------------
@@ -1469,8 +1494,8 @@ struct Softmax_c : public Softmax<kNRows> {
         }
         //sit.store_log_row_sum(row_max, row_sum, g_row_sum);
         //sit.store_sparse_inds(scores, row_max, row_sum, g_row_sum);
-        sit.store_sparse_inds(scores, row_max, row_sum);
-        /*
+        //sit.store_sparse_inds(scores, row_max, row_sum);
+        ///*
         //ss.original_coordinates(acc_s);
         //__syncthreads();
         //ss.store_ssweights(scores, row_max, row_sum);
@@ -1485,7 +1510,7 @@ struct Softmax_c : public Softmax<kNRows> {
 
     __device__ void ss_final () {
         //ss.filter_ssweights0(row_max, row_sum);
-        sit.final();
+        //sit.final();
     };
 
 }; 
