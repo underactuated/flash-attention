@@ -227,6 +227,8 @@ struct StochSparse {
     unsigned int msum = 0;
     SSWeight0 ssw_temp {0,0,0,0};
 
+    //unsigned int rand_count = 0;
+
 private:
 
     __host__ __device__ static auto get_tcaccs() {
@@ -591,12 +593,13 @@ public:
         constexpr int ni_max = decltype(size<1>(scores))::value;
         static_assert(decltype(size<0>(scores))::value == mi_max);
         //static_assert(ni_max == 16 || ni_max == 32);
-        if (rmi++ < 0) return;
+        //if (rmi++ < 100) return;
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
         unsigned int m[mi_max] = {};
         unsigned int rand_count = ni_max;
+        unsigned int rand_count0 = rand_count;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             //float row_max_mi = row_max(mi);
@@ -609,6 +612,7 @@ public:
                 m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
                 rand_count++;
             }
+            rand_count++; 
         }
 
         //if (thread(0, PRINT_BID)) printf("rand_count = %d\n", rand_count);
@@ -620,8 +624,9 @@ public:
         // }
         // #endif
 
-        #if 1 // USE THIS BLOCK FOR GH200 (incomplete or not?)
-        unsigned int rand_count0 = rand_count - mi_max * ni_max;
+        #if 1 // USE THIS BLOCK FOR GH200 (incomplete or not?) (better version, and seems correct)
+        //unsigned int rand_count0 = rand_count - mi_max * ni_max;
+        //unsigned int rand_count0 = rand_count - mi_max * (ni_max + 1);
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
             float row_max_mi = row_max(mi);
@@ -643,11 +648,12 @@ public:
             }
             //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
-            rand_count0 += ni_max;
+            //rand_count0 += ni_max;
+            rand_count0 += (ni_max + 1);
         }
         #endif
 
-        #if 0 // USE THIS BLOCK FOR A10
+        #if 0 // USE THIS BLOCK FOR A10 (worse version)
         float selected_scores[ni_max];
         unsigned int rand_count0 = rand_count - mi_max * ni_max; 
         #pragma unroll
@@ -1509,7 +1515,7 @@ struct Softmax_c : public Softmax<kNRows> {
     };
 
     __device__ void ss_final () {
-        //ss.filter_ssweights0(row_max, row_sum);
+        ss.filter_ssweights0(row_max, row_sum);
         //sit.final();
     };
 
