@@ -598,7 +598,9 @@ public:
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
         auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
         unsigned int m[mi_max] = {};
-        unsigned int rand_count = ni_max;
+        //unsigned int rand_count = ni_max;
+        //rand_count += threadIdx.x;
+        unsigned int rand_count = threadIdx.x / 32;
         unsigned int rand_count0 = rand_count;
         #pragma unroll
         for (int mi = 0; mi < size<0>(scores); ++mi) {
@@ -1158,7 +1160,7 @@ public:
     };
 
 };
-
+        
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /*struct StochSparse {
 
@@ -1355,6 +1357,348 @@ struct SparseIndexTracker {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/*
+template <int kNRows, typename Kernel_traits>
+struct StochSparse_clean1 {
+
+    const float c = 10; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float overc = 1. / c;
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_sum_tot;
+
+    static constexpr int kBlockM = Kernel_traits::kBlockM;
+    static constexpr int kBlockN = Kernel_traits::kBlockN;
+
+    SSWeight0 ssweights0 [ssw_size];
+    int ssw_count = 0;
+
+    int rmi = 0;
+
+private:
+
+    __host__ __device__ static auto get_tcaccs() {
+        // constexpr int kBlockM = Kernel_traits::kBlockM;
+        // constexpr int kBlockN = Kernel_traits::kBlockN;
+        const int tidx = threadIdx.x;
+        typename Kernel_traits::TiledMma tiled_mma;
+        auto thr_mma = tiled_mma.get_thread_slice(tidx);
+        Tensor caccs = make_identity_tensor(Shape<Int<kBlockM>, Int<kBlockN>>{});    // (BLK_M,BLK_N) -> (blk_m,blk_n)
+        return thr_mma.partition_C(caccs);
+    };
+
+public:
+
+    decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
+
+    __device__ StochSparse_clean1() {
+        tcaccs = get_tcaccs();
+    };
+
+    template <typename Tensor0, typename Tensor1>
+    __device__ void store_ssweights_test0 (const Tensor0 &scores, const Tensor1 &row_max, Tensor1 &row_sum) {
+        constexpr int mi_max = decltype(size<0>(scores))::value;
+        constexpr int ni_max = decltype(size<1>(scores))::value;
+        static_assert(decltype(size<0>(scores))::value == mi_max);
+        //static_assert(ni_max == 16 || ni_max == 32);
+        //if (rmi++ < 100) return;
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+        unsigned int m[mi_max] = {};
+        //unsigned int rand_count = ni_max;
+        //rand_count += threadIdx.x;
+        unsigned int rand_count = threadIdx.x / 32;
+        unsigned int rand_count0 = rand_count;
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            //float row_max_mi = row_max(mi);
+            float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+            #pragma unroll
+            for (int ni = 0; ni < size<1>(scores); ++ni) {
+                float score = scores(mi, ni);
+                int bit_pos = __builtin_ffs(rand_count);
+                unsigned int over_rand_val = 1 << bit_pos;
+                m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
+                rand_count++;
+            }
+            rand_count++; 
+        }
+
+        #if 1 // USE THIS BLOCK FOR GH200 (incomplete or not?) (better version, and seems correct)
+        //unsigned int rand_count0 = rand_count - mi_max * ni_max;
+        //unsigned int rand_count0 = rand_count - mi_max * (ni_max + 1);
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            float row_max_mi = row_max(mi);
+            unsigned int bits = m[mi];
+            int ni = -1;
+            while (bits && ssw_count < ssw_size) {
+                int i = __builtin_ffs(bits);
+                ni += i;
+                bits >>= i;
+                float score = get_score_predicated_mi(scores, mi, ni);
+                //float score = get_score_predicated1(scores, mi, ni);
+                //float score = get_score_predicated2(scores, row_max, mi, ni);
+                score = logf(score) + row_max_mi;
+                //score = logf(score) + row_max(mi);
+                char log_rand = __builtin_ffs(rand_count0 + ni);
+                auto coord = tcaccs_lo(mi, ni);
+                short col = get<1>(coord);
+                ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+            }
+            //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+                //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
+            //rand_count0 += ni_max;
+            rand_count0 += (ni_max + 1);
+        }
+        #endif
+
+        #if VERBAL
+        if (thread(0, PRINT_BID)) {
+            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+            for (int i = 0; i < mi_max; i++) printIntBits(m[i]);
+        }
+        #endif    
+    };
+
+    template <typename Tensor0>
+    __device__ float get_score_predicated_mi (const Tensor0 &scores, int mi, int ni) {
+        constexpr int ni_max = decltype(size<1>(scores))::value;
+        float result = 0.0f;
+        #pragma unroll
+        for (int n = 0; n < ni_max; n++) {
+            result = (n == ni) ? scores(mi, n) : result;
+        }
+        return result;
+        //return logf(result);
+    };
+
+    template <typename Tensor1>
+    __device__ void filter_ssweights0 (const Tensor1 &row_max) { //, Tensor1 &row_sum) {
+        #if VERBAL0
+        if (thread(0, PRINT_BID)) {
+            printf("ssw_count: %d\n", ssw_count);
+            if (ssw_count) printf("%f\n", (float)ssweights0[ssw_count-1].score);
+            //printf("msum = %u\n", msum);
+        }
+        #endif
+        
+        //if (threadIdx.x == 0 && ssw_count > 90) printf("bid = %d ssw_count = %d\n", blockIdx.x, ssw_count);
+        //return;
+        // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
+        // log_c + log_score - log_row_sum - row_max vs log_rand, or
+        // log_score - log_rand vs log_row_sum + row_max - log_c
+        float log_c = logf(c);
+        float log_2 = logf(2);
+        Tensor1 del_log;
+        for (int i = 0; i < size<0>(del_log); ++i) {
+            //del_log(i) = logf(row_sum(i)) + row_max(i) - log_c;
+            del_log(i) = logf(row_sum_tot(i)) + row_max(i) - log_c;
+        }
+        int i = 0;
+        for (int j = 0; j < ssw_count; ++j) {
+            auto ssw = ssweights0[j];
+            //if (thread(0, PRINT_BID)) printf("score  = %f log_rand = %f del_log = %f\n", ssw.score,(float)ssw.log_rand, del_log(ssw.row));
+            // if weight should be skipped, continue
+            if (ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue;
+            //if (row_maxs[j] + ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue; // undo
+            if (i < j) ssweights0[i] = ssweights0[j];
+            i++;
+        }
+        #if VERBAL0
+        if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
+        #endif
+        ssw_count = i;
+    };
+
+};
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <int kNRows, typename Kernel_traits>
+struct StochSparse_clean {
+
+    // try constexpr maybe?
+    const float c = 10; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    const float overc = 1. / c;
+
+    // maybe move it?
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_sum_tot;
+
+    // do we need it here?
+    static constexpr int kBlockM = Kernel_traits::kBlockM;
+    static constexpr int kBlockN = Kernel_traits::kBlockN;
+
+    //SSWeight ssweights [ssw_size];
+    SSWeight0 ssweights0 [ssw_size];
+    int ssw_count = 0;
+
+    //curandState local_state;
+    //curandStatePhilox4_32_10_t state;
+
+    //int rmi = 0;
+
+    //unsigned int msum = 0;
+
+    //unsigned int rand_count = 0;
+
+private:
+
+    __host__ __device__ static auto get_tcaccs() {
+        // constexpr int kBlockM = Kernel_traits::kBlockM;
+        // constexpr int kBlockN = Kernel_traits::kBlockN;
+        const int tidx = threadIdx.x;
+        typename Kernel_traits::TiledMma tiled_mma;
+        auto thr_mma = tiled_mma.get_thread_slice(tidx);
+        Tensor caccs = make_identity_tensor(Shape<Int<kBlockM>, Int<kBlockN>>{});    // (BLK_M,BLK_N) -> (blk_m,blk_n)
+        return thr_mma.partition_C(caccs);
+    };
+
+public:
+
+    decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
+
+    __device__ StochSparse_clean() {
+        //if (threadIdx.x == 0 && blockIdx.x == 0) {printf("MODIFIED VERSION RUNNING\n");} // temp
+        //if (thread0()) {printf("MODIFIED VERSION RUNNING\n");} // temp
+        tcaccs = get_tcaccs();
+        //int seed = 0;
+        //curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
+        //curand_init(seed, blockIdx.x * blockDim.x + threadIdx.x, 0, &state);
+    };
+
+    template <typename Tensor0, typename Tensor1>
+    __device__ void store_ssweights_test0 (const Tensor0 &scores, const Tensor1 &row_max, Tensor1 &row_sum) {
+        constexpr int mi_max = decltype(size<0>(scores))::value;
+        constexpr int ni_max = decltype(size<1>(scores))::value;
+        static_assert(decltype(size<0>(scores))::value == mi_max);
+        //static_assert(ni_max == 16 || ni_max == 32);
+        //if (rmi++ < 100) return;
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+        unsigned int m[mi_max] = {};
+        unsigned int rand_count = ni_max;
+        //rand_count += threadIdx.x;
+        //unsigned int rand_count = (blockIdx.x * blockDim.x + threadIdx.x) % 32;
+        //unsigned int rand_count = threadIdx.x % 32;
+
+        /*unsigned int drc = (threadIdx.x % 32 == 0) ? __float_as_int(scores(0,0)) : 0;
+        drc = __shfl_sync(0xFFFFFFFF, drc, 0);*/
+        /*
+        unsigned int rand_count = (threadIdx.x % 32 == 0) ? __float_as_int(scores(0,0)) : 0;
+        rand_count = __shfl_sync(0xFFFFFFFF, rand_count, 0);*/
+
+        unsigned int rand_count0 = rand_count;
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            //float row_max_mi = row_max(mi);
+            float row_sum_tot_mi_oc = row_sum_tot(mi) * overc;
+            #pragma unroll
+            for (int ni = 0; ni < size<1>(scores); ++ni) {
+                float score = scores(mi, ni);
+                int bit_pos = __builtin_ffs(rand_count);
+                //int bit_pos = __builtin_ffs(rand_count + drc);
+                unsigned int over_rand_val = 1 << bit_pos;
+                //unsigned int over_rand_val = 1 << __builtin_ffs(rand_count);
+                m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
+                rand_count++;
+            }
+            rand_count++; 
+        }
+
+        #if 1 // USE THIS BLOCK FOR GH200 (incomplete or not?) (better version, and seems correct)
+        //unsigned int rand_count0 = rand_count - mi_max * ni_max;
+        //unsigned int rand_count0 = rand_count - mi_max * (ni_max + 1);
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(scores); ++mi) {
+            float row_max_mi = row_max(mi);
+            unsigned int bits = m[mi];
+            int ni = -1;
+            while (bits && ssw_count < ssw_size) {
+                int i = __builtin_ffs(bits);
+                ni += i;
+                bits >>= i;
+                float score = get_score_predicated_mi(scores, mi, ni);
+                score = logf(score) + row_max_mi;
+                //score = logf(score) + row_max(mi);
+                char log_rand = __builtin_ffs(rand_count0 + ni);
+                auto coord = tcaccs_lo(mi, ni);
+                short col = get<1>(coord);
+                ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+            }
+            //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
+                //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
+            //rand_count0 += ni_max;
+            rand_count0 += (ni_max + 1);
+        }
+        #endif
+
+        #if VERBAL
+        if (thread(0, PRINT_BID)) {
+            printf("ms: %u %u %u %u\n", m[0], m[1], m[2], m[3]);
+            for (int i = 0; i < mi_max; i++) printIntBits(m[i]);
+        }
+        #endif    
+    };
+
+    template <typename Tensor0>
+    __device__ float get_score_predicated_mi (const Tensor0 &scores, int mi, int ni) {
+        constexpr int ni_max = decltype(size<1>(scores))::value;
+        float result = 0.0f;
+        #pragma unroll
+        for (int n = 0; n < ni_max; n++) {
+            result = (n == ni) ? scores(mi, n) : result;
+        }
+        return result;
+        //return logf(result);
+    };
+
+    template <typename Tensor1>
+    __device__ void filter_ssweights0 (const Tensor1 &row_max) {
+        #if VERBAL0
+        if (thread(0, PRINT_BID)) {
+            printf("ssw_count: %d\n", ssw_count);
+            if (ssw_count) printf("%f\n", (float)ssweights0[ssw_count-1].score);
+            //printf("msum = %u\n", msum);
+        }
+        #endif
+        
+        //if (threadIdx.x == 0 && ssw_count > 90) printf("bid = %d ssw_count = %d\n", blockIdx.x, ssw_count);
+        //return;
+        // to compare c*score/(row_sum*exp(row_max)) vs rand_val, we can compare:
+        // log_c + log_score - log_row_sum - row_max vs log_rand, or
+        // log_score - log_rand vs log_row_sum + row_max - log_c
+        float log_c = logf(c);
+        float log_2 = logf(2);
+        Tensor1 del_log;
+        for (int i = 0; i < size<0>(del_log); ++i) {
+            //del_log(i) = logf(row_sum(i)) + row_max(i) - log_c;
+            del_log(i) = logf(row_sum_tot(i)) + row_max(i) - log_c;
+        }
+        int i = 0;
+        for (int j = 0; j < ssw_count; ++j) {
+            auto ssw = ssweights0[j];
+            //if (thread(0, PRINT_BID)) printf("score  = %f log_rand = %f del_log = %f\n", ssw.score,(float)ssw.log_rand, del_log(ssw.row));
+            // if weight should be skipped, continue
+            if (ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue;
+            //if (row_maxs[j] + ssw.score + (float)ssw.log_rand - log_2 < del_log(ssw.row)) continue; // undo
+            if (i < j) ssweights0[i] = ssweights0[j];
+            i++;
+        }
+        #if VERBAL0
+        if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
+        #endif
+        ssw_count = i;
+    };
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 template <int kNRows>
 struct Softmax {
 
@@ -1424,8 +1768,10 @@ struct Softmax_c : public Softmax<kNRows> {
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
-    StochSparse<kNRows, Kernel_traits> ss;
+    //StochSparse<kNRows, Kernel_traits> ss;
     //SparseIndexTracker<kNRows> sit;
+    StochSparse_clean<kNRows, Kernel_traits> ss;
+    //StochSparse_clean1<kNRows, Kernel_traits> ss;
 
 #if 0
 //-----------------
@@ -1515,7 +1861,8 @@ struct Softmax_c : public Softmax<kNRows> {
     };
 
     __device__ void ss_final () {
-        ss.filter_ssweights0(row_max, row_sum);
+        //ss.filter_ssweights0(row_max, row_sum);
+        //ss.filter_ssweights0(row_max);
         //sit.final();
     };
 
