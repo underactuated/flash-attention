@@ -340,4 +340,5 @@ void run_mha_fwd_hdim256(Flash_fwd_params &params, cudaStream_t stream) {
     });
     */
 }
+
 }  // namespace FLASH_NAMESPACE

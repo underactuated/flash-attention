@@ -1536,14 +1536,20 @@ struct StochSparse_clean {
     SSWeight0 ssweights0 [ssw_size];
     int ssw_count = 0;
 
+    /*float ssws_f [ssw_size];
+    unsigned int ssws_i [ssw_size];*/
+
     //curandState local_state;
     //curandStatePhilox4_32_10_t state;
 
-    //int rmi = 0;
+    int block_i = 0;
 
     //unsigned int msum = 0;
 
     //unsigned int rand_count = 0;
+    //int drc = 0;
+
+    //void* tcaccs_lo1;
 
 private:
 
@@ -1557,9 +1563,11 @@ private:
         return thr_mma.partition_C(caccs);
     };
 
+    decltype(get_tcaccs()) tcaccs;
+
 public:
 
-    decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
+    //decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
 
     __device__ StochSparse_clean() {
         //if (threadIdx.x == 0 && blockIdx.x == 0) {printf("MODIFIED VERSION RUNNING\n");} // temp
@@ -1568,6 +1576,7 @@ public:
         //int seed = 0;
         //curand_init(seed + blockIdx.x * blockDim.x + threadIdx.x, 0, 0, &local_state);
         //curand_init(seed, blockIdx.x * blockDim.x + threadIdx.x, 0, &state);
+        //tcaccs_lo1 = &FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
     };
 
     template <typename Tensor0, typename Tensor1>
@@ -1576,21 +1585,23 @@ public:
         constexpr int ni_max = decltype(size<1>(scores))::value;
         static_assert(decltype(size<0>(scores))::value == mi_max);
         //static_assert(ni_max == 16 || ni_max == 32);
-        //if (rmi++ < 100) return;
+        //if (block_i++ < 100) return;
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
-        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+        auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout()); // undo
         unsigned int m[mi_max] = {};
         unsigned int rand_count = ni_max;
         //rand_count += threadIdx.x;
         //unsigned int rand_count = (blockIdx.x * blockDim.x + threadIdx.x) % 32;
         //unsigned int rand_count = threadIdx.x % 32;
 
-        /*unsigned int drc = (threadIdx.x % 32 == 0) ? __float_as_int(scores(0,0)) : 0;
-        drc = __shfl_sync(0xFFFFFFFF, drc, 0);*/
+        /*
+        unsigned int drc = (threadIdx.x % 32 == 0) ? __float_as_int(scores(0,0)) : 0;
+        drc = __shfl_sync(0xFFFFFFFF, drc, 0);//*/
         /*
         unsigned int rand_count = (threadIdx.x % 32 == 0) ? __float_as_int(scores(0,0)) : 0;
-        rand_count = __shfl_sync(0xFFFFFFFF, rand_count, 0);*/
+        rand_count = __shfl_sync(0xFFFFFFFF, rand_count, 0);//*/
+        //unsigned int drc = __float_as_int(scores(0,0));
 
         unsigned int rand_count0 = rand_count;
         #pragma unroll
@@ -1603,8 +1614,8 @@ public:
                 int bit_pos = __builtin_ffs(rand_count);
                 //int bit_pos = __builtin_ffs(rand_count + drc);
                 unsigned int over_rand_val = 1 << bit_pos;
-                //unsigned int over_rand_val = 1 << __builtin_ffs(rand_count);
-                m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
+                //m[mi] += (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
+                m[mi] |= (score * over_rand_val > row_sum_tot_mi_oc)? 1 << ni : 0;
                 rand_count++;
             }
             rand_count++; 
@@ -1626,9 +1637,18 @@ public:
                 score = logf(score) + row_max_mi;
                 //score = logf(score) + row_max(mi);
                 char log_rand = __builtin_ffs(rand_count0 + ni);
-                auto coord = tcaccs_lo(mi, ni);
-                short col = get<1>(coord);
+                auto coord = tcaccs_lo(mi, ni); // undo
+                //using func_type = decltype(FLASH_NAMESPACE::convert_layout_acc_rowcol(get_tcaccs().layout()));
+                //auto coord = *(func_type*)tcaccs_lo1(mi, ni);
+                short col = get<1>(coord); // undo
+                //short col = mi;
                 ssweights0[ssw_count++] = SSWeight0{score, log_rand, (char)mi, col};
+
+                /*unsigned int log_rand = __builtin_ffs(rand_count0 + ni);
+                auto coord = tcaccs_lo(mi, ni);
+                unsigned int col = get<1>(coord);
+                ssws_f[ssw_count] = score;
+                ssws_i[ssw_count++] = (((col << 8) | log_rand) << 8) | mi;*/
             }
             //if (thread(0, PRINT_BID)) printf("ssi = %d\n", ssi);
                 //printf("ssi = %d score_sum = %f\n", ssi, score_sum);
@@ -1657,6 +1677,7 @@ public:
         //return logf(result);
     };
 
+    ///*
     template <typename Tensor1>
     __device__ void filter_ssweights0 (const Tensor1 &row_max) {
         #if VERBAL0
@@ -1693,7 +1714,7 @@ public:
         if (thread(0, PRINT_BID)) printf("filtered out: %d\n", ssw_count - i);
         #endif
         ssw_count = i;
-    };
+    };//*/
 
 };
 
