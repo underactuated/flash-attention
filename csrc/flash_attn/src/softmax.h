@@ -1720,6 +1720,66 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define ww_size 32 * 8
+            
+#if 1
+template <int kNRows, typename Kernel_traits>
+struct StochSparse_simple {
+
+    //const float c = 10; //10; //50; //10; //1; //50; //20; //10; //5; //10; //1; //10; //1e-30; //10;
+    //const float overc = 1. / c;
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_sum_tot;
+
+    // do we need it here?
+    //static constexpr int kBlockM = Kernel_traits::kBlockM;
+    //static constexpr int kBlockN = Kernel_traits::kBlockN;
+
+    ///*
+    float warp_weights [ww_size];
+    int ww_count = 0;
+
+    template <typename Tensor1>
+    __device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum) {
+        constexpr int mi_max = 4; //decltype(size<0>(scores))::value;
+        float s = 0;
+        #pragma unroll
+        for (int mi = 0; mi < mi_max; ++mi) {
+            s += (row_max(mi) + row_sum(mi));
+        }
+        warp_weights[ww_count++] = s;
+
+    };//*/
+
+    /*//float warp_weights [ww_size];
+    int ww_count = 0;
+
+    //__shared__ float shared_buffer[blockDim.x * 8];
+    __shared__ float shared_buffer[128 * 8];
+    //float* my_shared_buffer = &shared_buffer[threadIdx.x * 9];
+    //const unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    template <typename Tensor1>
+    __device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum) {
+        constexpr int mi_max = 4; //decltype(size<0>(scores))::value;
+        float s = 0;
+        #pragma unroll
+        for (int mi = 0; mi < mi_max; ++mi) {
+            s += (row_max(mi) + row_sum(mi));
+        }
+        //my_shared_buffer[ww_count % 8] = s;
+        int step = ww_count % 8;
+        shared_buffer[step * 128 + threadIdx.x] = s;
+        ww_count++;
+        //warp_weights[ww_count++] = s;
+    };//*/
+};
+
+#endif
+        
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 template <int kNRows>
 struct Softmax {
 
@@ -1791,8 +1851,9 @@ struct Softmax_c : public Softmax<kNRows> {
 
     //StochSparse<kNRows, Kernel_traits> ss;
     //SparseIndexTracker<kNRows> sit;
-    StochSparse_clean<kNRows, Kernel_traits> ss;
+    //StochSparse_clean<kNRows, Kernel_traits> ss;
     //StochSparse_clean1<kNRows, Kernel_traits> ss;
+    StochSparse_simple<kNRows, Kernel_traits> sss;
 
 #if 0
 //-----------------
@@ -1868,7 +1929,7 @@ struct Softmax_c : public Softmax<kNRows> {
         //sit.store_log_row_sum(row_max, row_sum, g_row_sum);
         //sit.store_sparse_inds(scores, row_max, row_sum, g_row_sum);
         //sit.store_sparse_inds(scores, row_max, row_sum);
-        ///*
+        /*
         //ss.original_coordinates(acc_s);
         //__syncthreads();
         //ss.store_ssweights(scores, row_max, row_sum);
@@ -1878,6 +1939,7 @@ struct Softmax_c : public Softmax<kNRows> {
         //ss.filter_ssweights(row_max, row_sum);
         //__syncthreads();
         //*/
+        sss.store_wws(row_max, row_sum);
         
     };
 
