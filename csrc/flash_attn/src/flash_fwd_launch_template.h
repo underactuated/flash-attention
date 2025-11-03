@@ -65,9 +65,9 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     const bool is_even_MN = params.cu_seqlens_q == nullptr && params.cu_seqlens_k == nullptr && params.seqlen_k % Kernel_traits::kBlockN == 0 && params.seqlen_q % Kernel_traits::kBlockM == 0;
     const bool is_even_K = params.d == Kernel_traits::kHeadDim;
     const bool return_softmax = params.p_ptr != nullptr;
-    #if 0
+    #if 1
     ///////////// global memory test ////////////
-    int store_size = 32; //32 * 32;
+    int store_size = 32 * 1; //32 * 32;
     static_assert(Kernel_traits::kNThreads == 128);
     size_t total_threads = grid.x * grid.y * grid.z * Kernel_traits::kNThreads;
     cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
@@ -117,10 +117,10 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
             });
         });
     });
-    /*// SYNCHRONIZE HERE
+    //*// SYNCHRONIZE HERE
     cudaStreamSynchronize(stream);
     // FREE HERE
-    cudaFree(params.d_row_sum);*/
+    cudaFree(params.d_row_sum);//*/
 }
 
 template<typename Kernel_traits, bool Is_causal>

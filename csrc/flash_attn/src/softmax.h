@@ -1720,7 +1720,7 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define ww_size 32 * 8
+#define ww_size 32 * 1 //32 * 8
             
 #if 1
 template <int kNRows, typename Kernel_traits>
@@ -1737,18 +1737,56 @@ struct StochSparse_simple {
     //static constexpr int kBlockN = Kernel_traits::kBlockN;
 
     ///*
-    float warp_weights [ww_size];
+    //float warp_weights [ww_size];
     int ww_count = 0;
 
+    float prev_max = 0;
+    float prev_sum = 0;
+        
+
+    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
+    const int tid = bid * blockDim.x + threadIdx.x;
+    //int thread_offset = tid * ww_size;
+    const int thread_offset = int(tid / 32) * 32 * ww_size + (tid % 32);
+
     template <typename Tensor1>
-    __device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum) {
-        constexpr int mi_max = 4; //decltype(size<0>(scores))::value;
+    //__device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum) {
+    __device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum, float* g_row_sum) {
+        /*constexpr int mi_max = 4; //decltype(size<0>(scores))::value;
         float s = 0;
         #pragma unroll
         for (int mi = 0; mi < mi_max; ++mi) {
             s += (row_max(mi) + row_sum(mi));
+        }*/
+
+        Tensor1 row_sum_tot;
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        
+        float curr_max = row_max(0);
+        float curr_sum = row_sum_tot(0);
+        float log_del_sum = logf(curr_sum - prev_sum * expf(prev_max - curr_max)) + curr_max;
+        if (thread(0, PRINT_BID)) printf("log_del_sum = %f curr_max = %f curr_sum = %f prev_max = %f prev_sum = %f\n", log_del_sum, curr_max, curr_sum, prev_max, prev_sum);
+        prev_max = curr_max;
+        prev_sum = curr_sum;
+
+        if (thread(0, PRINT_BID) && curr_sum < 1.000001) {
+            for(int mi = 0; mi < 4; ++mi) {
+                printf("row_sum(%d) = %f, row_sum_tot(%d) = %f\n", mi, row_sum(mi), mi, row_sum_tot(mi));
+            }
         }
-        warp_weights[ww_count++] = s;
+        
+        //if (thread(0, PRINT_BID)) printf("log_del_sum = %f\n", log_del_sum);
+        
+        float s = log_del_sum;
+        
+        //warp_weights[ww_count++] = s;
+        //if (ww_count % 2 == 0) warp_weights[ww_count/2] = s;
+        //ww_count++;
+
+        //if (ww_count < 1) g_row_sum[thread_offset + ww_count] = s;
+        if (ww_count < ww_size) g_row_sum[thread_offset + 32 * ww_count] = s;
+        ww_count++;
 
     };//*/
 
@@ -1882,8 +1920,8 @@ struct Softmax_c : public Softmax<kNRows> {
     __device__ Softmax_c() {};
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
-    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
-    //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
+    //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
+    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
@@ -1939,8 +1977,8 @@ struct Softmax_c : public Softmax<kNRows> {
         //ss.filter_ssweights(row_max, row_sum);
         //__syncthreads();
         //*/
-        sss.store_wws(row_max, row_sum);
-        
+        //sss.store_wws(row_max, row_sum);
+        sss.store_wws(row_max, row_sum, g_row_sum);
     };
 
     __device__ void ss_final () {
