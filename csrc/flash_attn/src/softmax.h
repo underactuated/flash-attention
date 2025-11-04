@@ -1752,33 +1752,42 @@ struct StochSparse_simple {
     template <typename Tensor1>
     //__device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum) {
     __device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum, float* g_row_sum) {
-        /*constexpr int mi_max = 4; //decltype(size<0>(scores))::value;
+        /*
+        constexpr int mi_max = 4; //decltype(size<0>(scores))::value;
         float s = 0;
         #pragma unroll
         for (int mi = 0; mi < mi_max; ++mi) {
             s += (row_max(mi) + row_sum(mi));
-        }*/
+        }
+        //*/
 
+        ///*
+
+        //Tensor scores_max_prev = make_fragment_like(row_max); cute::copy(row_max, scores_max_prev);
+        
         Tensor1 row_sum_tot;
         SumOp<float> sum_op;
         quad_allreduce_(row_sum_tot, row_sum, sum_op);
+        //cute::copy(row_sum, row_sum_tot);
+        //quad_allreduce_(row_sum_tot, row_sum_tot, sum_op);
         
         float curr_max = row_max(0);
-        float curr_sum = row_sum_tot(0);
-        float log_del_sum = logf(curr_sum - prev_sum * expf(prev_max - curr_max)) + curr_max;
+        float curr_sum = row_sum_tot(0); curr_sum = row_sum(0);
+        float log_del_sum = logf(curr_sum - prev_sum * expf(prev_max - curr_max)) + curr_max * 1;
         if (thread(0, PRINT_BID)) printf("log_del_sum = %f curr_max = %f curr_sum = %f prev_max = %f prev_sum = %f\n", log_del_sum, curr_max, curr_sum, prev_max, prev_sum);
         prev_max = curr_max;
         prev_sum = curr_sum;
 
-        if (thread(0, PRINT_BID) && curr_sum < 1.000001) {
+        float s = log_del_sum;
+        //*/
+
+        /*if (thread(0, PRINT_BID) && curr_sum < 1.000001) {
             for(int mi = 0; mi < 4; ++mi) {
                 printf("row_sum(%d) = %f, row_sum_tot(%d) = %f\n", mi, row_sum(mi), mi, row_sum_tot(mi));
             }
-        }
+        }*/
         
         //if (thread(0, PRINT_BID)) printf("log_del_sum = %f\n", log_del_sum);
-        
-        float s = log_del_sum;
         
         //warp_weights[ww_count++] = s;
         //if (ww_count % 2 == 0) warp_weights[ww_count/2] = s;
@@ -1789,6 +1798,37 @@ struct StochSparse_simple {
         ww_count++;
 
     };//*/
+
+    template<typename Tensor0>
+    __device__ void analyze_scores(Tensor0 &scores){
+        float score_sum = 0;
+        for (int ni = 0; ni < size<1>(scores); ++ni) {
+            score_sum += scores(0, ni);
+        }
+        if (thread(0, PRINT_BID)) printf("log(score_sum) = %f\n", logf(score_sum));
+    };
+
+    template<typename Tensor0, typename Tensor1>
+    __device__ void analyze_scale_apply_exp2(const Tensor0 &scores, const Tensor1 &row_max, const float ssl2){
+        if (!thread(0, PRINT_BID)) return;
+        //if (row_max(0) < 0) return;
+        auto row_max0 = make_fragment_like(row_max);
+        auto scores1 = make_fragment_like(scores);
+        auto scores2 = make_fragment_like(scores);
+        cute::copy(scores, scores1);
+        cute::copy(scores, scores2);
+        for (int mi = 0; mi < 4; ++mi) row_max0(mi) = 0;
+        FLASH_NAMESPACE::scale_apply_exp2(scores1, row_max, ssl2);
+        FLASH_NAMESPACE::scale_apply_exp2(scores2, row_max0, ssl2);
+        float score_sum1 = 0, score_sum2 = 0;
+        for (int ni = 0; ni < size<1>(scores); ++ni) {
+            score_sum1 += scores1(0, ni);
+            score_sum2 += scores2(0, ni);
+        }
+        float res1 = logf(score_sum1) + row_max(0);
+        float res2 = logf(score_sum2);
+        printf("res1 = %f, res2 = %f\n", res1, res2);//*/
+    };
 
     /*//float warp_weights [ww_size];
     int ww_count = 0;
@@ -1922,6 +1962,7 @@ struct Softmax_c : public Softmax<kNRows> {
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
     __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
+        //if (thread(0, PRINT_BID)) printf("softmax_scale_log2 = %f\n", softmax_scale_log2);
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
@@ -1954,6 +1995,7 @@ struct Softmax_c : public Softmax<kNRows> {
                 //log_row_sum[count + mi] = row_sum(mi); // exper
                 //ms[count + mi] = row_max(mi); // exper
             }
+            sss.analyze_scale_apply_exp2(scores, row_max, softmax_scale_log2);
             FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
             // We don't do the reduce across threads here since we don't need to use the row_sum.
             // We do that reduce at the end when we need to normalize the softmax.
@@ -1979,6 +2021,7 @@ struct Softmax_c : public Softmax<kNRows> {
         //*/
         //sss.store_wws(row_max, row_sum);
         sss.store_wws(row_max, row_sum, g_row_sum);
+        sss.analyze_scores(scores);
     };
 
     __device__ void ss_final () {
