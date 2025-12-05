@@ -132,7 +132,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define PRINT_BID 30 //1
+#define PRINT_BID 3 //30 //1
 #define VERBAL 0 //1
 #define VERBAL0 1
 
@@ -261,8 +261,9 @@ public:
 
     template<typename Tensor0>
     __device__ void original_coordinates(Tensor0 &acc_s) { // todo: replace acc_s with scores
-        #if 0
-        if (thread(0, PRINT_BID)) {
+        #if 1
+        //if (thread(0, PRINT_BID)) {
+        if (thread0()) {
         //if (thread(0, 1)) {
             print(acc_s);
             printf(" <-- acc_s\n");
@@ -1750,6 +1751,51 @@ struct StochSparse_simple {
     //int thread_offset = tid * ww_size;
     const int thread_offset = int(tid / 32) * 32 * ww_size + (tid % 32);
 
+    //////////////// coordinates ////////////////
+
+private:
+
+    __host__ __device__ static auto get_tcaccs() {
+        constexpr int kBlockM = Kernel_traits::kBlockM;
+        constexpr int kBlockN = Kernel_traits::kBlockN;
+        const int tidx = threadIdx.x;
+        typename Kernel_traits::TiledMma tiled_mma;
+        auto thr_mma = tiled_mma.get_thread_slice(tidx);
+        Tensor caccs = make_identity_tensor(Shape<Int<kBlockM>, Int<kBlockN>>{});    // (BLK_M,BLK_N) -> (blk_m,blk_n)
+        return thr_mma.partition_C(caccs);
+    };
+
+public:
+
+    decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
+
+    __device__ StochSparse_simple() {
+        tcaccs = get_tcaccs();
+    };
+
+    template<typename Tensor0>
+    __device__ void original_coordinates(Tensor0 &acc_s) { // ? todo: replace acc_s with scores
+        #if 1
+        //if (thread(0, PRINT_BID)) {
+        //if (thread0()) {
+        if (thread(10, 0)) {
+
+            printf("tidx = %d\n", tid);
+
+            auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
+            printf("size = %d\n", (int)size(acc_s));
+            for (int i = 0; i < size(acc_s); ++i) {
+                auto coord = tcaccs_lo(i);
+                printf(" coord ");
+                print(coord);
+                printf("\n");
+            }
+        }
+        #endif
+    };
+    
+    //////////////// end coordiantes ////////////
+
     template <typename Tensor1>
     //__device__ void store_wws (const Tensor1 &row_max, Tensor1 &row_sum) {
     __device__ void store_wws (const Tensor1 &row_max, const Tensor1 &row_sum, float* g_row_sum) {
@@ -2055,6 +2101,7 @@ struct Softmax_c : public Softmax<kNRows> {
         //sss.store_wws(row_max, row_sum);
         //sss.analyze_scores(scores, row_max(0));
         //sss.store_wws(row_max, row_sum, g_row_sum);
+        sss.original_coordinates(acc_s);
     };
 
     __device__ void ss_final () {
