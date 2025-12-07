@@ -132,7 +132,7 @@ __forceinline__ __device__ void max_scale_exp2_sum(Tensor<Engine0, Layout0> &ten
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define PRINT_BID 3 //30 //1
+#define PRINT_BID 30 //1
 #define VERBAL 0 //1
 #define VERBAL0 1
 
@@ -1771,6 +1771,7 @@ public:
 
     __device__ StochSparse_simple() {
         tcaccs = get_tcaccs();
+        // 
     };
 
     template<typename Tensor0>
@@ -1778,15 +1779,18 @@ public:
         #if 1
         //if (thread(0, PRINT_BID)) {
         //if (thread0()) {
-        if (thread(10, 0)) {
+        if (thread(100, 0)) {
 
             printf("tidx = %d\n", tid);
 
             auto tcaccs_lo = FLASH_NAMESPACE::convert_layout_acc_rowcol(tcaccs.layout());
             printf("size = %d\n", (int)size(acc_s));
             for (int i = 0; i < size(acc_s); ++i) {
-                auto coord = tcaccs_lo(i);
-                printf(" coord ");
+                auto coord1 = tcaccs_lo(i);
+                auto coord = tcaccs(i);
+                //printf(" coord ");
+                //print(coord);
+                printf("coord ");
                 print(coord);
                 printf("\n");
             }
@@ -1828,6 +1832,15 @@ public:
         prev_sum = curr_sum;
 
         float s = log_del_sum;
+
+        for (int th = 0; th < 8; th++) {
+            if (thread(th, PRINT_BID)) {
+                int r = th % 4;
+                float log_sum = logf(row_sum_tot(r)) + row_max(r) * softmax_scale;
+                printf("th = %d, log_sum = %f\n", th, log_sum);
+                //printf("th = %d, row_max = %f\n", th, row_max(th % 4));
+            }
+        }
         //*/
 
         /*if (thread(0, PRINT_BID) && curr_sum < 1.000001) {
@@ -2100,8 +2113,8 @@ struct Softmax_c : public Softmax<kNRows> {
         //*/
         //sss.store_wws(row_max, row_sum);
         //sss.analyze_scores(scores, row_max(0));
-        //sss.store_wws(row_max, row_sum, g_row_sum);
-        sss.original_coordinates(acc_s);
+        sss.store_wws(row_max, row_sum, g_row_sum);
+        //sss.original_coordinates(acc_s);
     };
 
     __device__ void ss_final () {
