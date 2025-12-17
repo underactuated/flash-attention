@@ -103,6 +103,7 @@ def _flash_attn_forward(
         return_softmax,
         None,
     )
+    print("hi from _flash_attn_forward")
     return out, softmax_lse, S_dmask, rng_state
 
 
