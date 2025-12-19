@@ -86,9 +86,11 @@ def _flash_attn_forward(
     softcap: float,
     alibi_slopes: Optional[torch.Tensor],
     return_softmax: bool
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+#) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
-    out, softmax_lse, S_dmask, rng_state = flash_attn_gpu.fwd(
+    #out, softmax_lse, S_dmask, rng_state = flash_attn_gpu.fwd(
+    out, softmax_lse, S_dmask, rng_state, my_data = flash_attn_gpu.fwd(
         q,
         k,
         v,
@@ -104,6 +106,9 @@ def _flash_attn_forward(
         None,
     )
     print("hi from _flash_attn_forward")
+    print(my_data.shape)
+    #my_data = None
+    return out, softmax_lse, S_dmask, rng_state, my_data
     return out, softmax_lse, S_dmask, rng_state
 
 
@@ -832,7 +837,8 @@ class FlashAttnFunc(torch.autograd.Function):
             q = torch.nn.functional.pad(q, [0, 8 - head_size_og % 8])
             k = torch.nn.functional.pad(k, [0, 8 - head_size_og % 8])
             v = torch.nn.functional.pad(v, [0, 8 - head_size_og % 8])
-        out_padded, softmax_lse, S_dmask, rng_state = _wrapped_flash_attn_forward(
+        #out_padded, softmax_lse, S_dmask, rng_state = _wrapped_flash_attn_forward(
+        out_padded, softmax_lse, S_dmask, rng_state, my_data = _wrapped_flash_attn_forward(
             q,
             k,
             v,
@@ -855,7 +861,8 @@ class FlashAttnFunc(torch.autograd.Function):
             ctx.alibi_slopes = alibi_slopes
             ctx.deterministic = deterministic
         out = out_padded[..., :head_size_og]
-        return out if not return_softmax else (out, softmax_lse, S_dmask)
+        #return out if not return_softmax else (out, softmax_lse, S_dmask)
+        return (out, my_data) if not return_softmax else (out, softmax_lse, S_dmask)
 
     @staticmethod
     def backward(ctx, dout, *args):

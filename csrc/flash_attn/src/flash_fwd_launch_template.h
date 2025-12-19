@@ -120,7 +120,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     //*// SYNCHRONIZE HERE
     cudaStreamSynchronize(stream);
     // FREE HERE
-    cudaFree(params.d_row_sum);//*/
+    //cudaFree(params.d_row_sum);//*/
 }
 
 template<typename Kernel_traits, bool Is_causal>
