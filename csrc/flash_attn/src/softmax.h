@@ -1833,6 +1833,10 @@ public:
 
         float s = log_del_sum;
 
+        int r = threadIdx.x % 4;
+        float log_sum = logf(row_sum_tot(r)) + row_max(r) * softmax_scale;
+        s = log_sum;
+
         for (int th = 0; th < 8; th++) {//continue;
             if (thread(th, PRINT_BID)) {
                 int r = th % 4;
