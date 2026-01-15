@@ -2117,7 +2117,7 @@ struct Softmax_c : public Softmax<kNRows> {
         //*/
         //sss.store_wws(row_max, row_sum);
         //sss.analyze_scores(scores, row_max(0));
-        sss.store_wws(row_max, row_sum, g_row_sum);
+        //sss.store_wws(row_max, row_sum, g_row_sum); // uncomment for weight storing
         //sss.original_coordinates(acc_s);
     };
 
