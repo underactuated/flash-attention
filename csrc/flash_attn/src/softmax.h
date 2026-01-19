@@ -1837,7 +1837,7 @@ public:
         float log_sum = logf(row_sum_tot(r)) + row_max(r) * softmax_scale;
         s = log_sum;
 
-        for (int th = 0; th < 8; th++) {//continue;
+        for (int th = 0; th < 8; th++) {continue; // comment out continue, to print data
             if (thread(th, PRINT_BID)) {
                 int r = th % 4;
                 float log_sum = logf(row_sum_tot(r)) + row_max(r) * softmax_scale;
@@ -2117,7 +2117,7 @@ struct Softmax_c : public Softmax<kNRows> {
         //*/
         //sss.store_wws(row_max, row_sum);
         //sss.analyze_scores(scores, row_max(0));
-        //sss.store_wws(row_max, row_sum, g_row_sum); // uncomment for weight storing
+        sss.store_wws(row_max, row_sum, g_row_sum); // uncomment for weight storing
         //sss.original_coordinates(acc_s);
     };
 

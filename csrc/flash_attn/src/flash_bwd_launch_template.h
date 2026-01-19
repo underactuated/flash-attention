@@ -160,7 +160,7 @@ void run_mha_bwd_hdim32(Flash_bwd_params &params, cudaStream_t stream) {
 
 template<typename T, bool Is_causal>
 void run_mha_bwd_hdim64(Flash_bwd_params &params, cudaStream_t stream) {
-    ///*
+    /*
     constexpr static int Headdim = 64;
     int device;
     cudaGetDevice(&device);
@@ -203,7 +203,7 @@ void run_mha_bwd_hdim64(Flash_bwd_params &params, cudaStream_t stream) {
     // run_flash_bwd<Flash_bwd_kernel_traits<Headdim, 64, 64, 4, false, T>>(params, stream);
 
     // run_flash_bwd<Flash_bwd_kernel_traits<Headdim, 128, 64, 4, 4, 2, 4, false, false, T>>(params, stream);
-    //*/
+    */
 }
 
 template<typename T, bool Is_causal>
