@@ -260,7 +260,9 @@ def _flash_attn_backward(
     alibi_slopes: Optional[torch.Tensor],
     deterministic: bool,
     rng_state: Optional[torch.Tensor] = None,
+    block_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    print("from _flash_attn_backward, block_mask:", block_mask.shape)
     # dq, dk, dv are allocated by us so they should already be contiguous
     dout, q, k, v, out = [maybe_contiguous(x) for x in (dout, q, k, v, out)]
     (
@@ -288,6 +290,7 @@ def _flash_attn_backward(
         deterministic,
         None,
         rng_state,
+        block_mask,
     )
     return softmax_d
 
@@ -852,7 +855,9 @@ class FlashAttnFunc(torch.autograd.Function):
             return_softmax=return_softmax and dropout_p > 0,
         )
         if is_grad:
-            ctx.save_for_backward(q, k, v, out_padded, softmax_lse, rng_state)
+            block_mask = block_mask_for_backward(my_data)
+            ctx.save_for_backward(q, k, v, out_padded, softmax_lse, rng_state, block_mask)
+            #ctx.save_for_backward(q, k, v, out_padded, softmax_lse, rng_state)
             ctx.dropout_p = dropout_p
             ctx.softmax_scale = softmax_scale
             ctx.causal = causal
@@ -866,7 +871,8 @@ class FlashAttnFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
+        #q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
+        q, k, v, out, softmax_lse, rng_state, block_mask = ctx.saved_tensors
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
         head_size_og = dout.size(3)
         dout_padded = dout
@@ -891,11 +897,20 @@ class FlashAttnFunc(torch.autograd.Function):
             ctx.alibi_slopes,
             ctx.deterministic,
             rng_state=rng_state,
+            block_mask=block_mask,
         )
         dq = dq[..., : dout.shape[-1]]  # We could have padded the head dimension
         dk = dk[..., : dout.shape[-1]]
         dv = dv[..., : dout.shape[-1]]
         return dq, dk, dv, None, None, None, None, None, None, None, None, None
+
+def block_mask_for_backward (data):
+    #print("data shape:", data.shape)
+    shape = list(data.shape)
+    shape[2] //= 128
+    block_mask = torch.rand(shape)
+    #print("block_mask shape:", block_mask.shape)
+    return block_mask
 
 
 class FlashAttnVarlenFunc(torch.autograd.Function):

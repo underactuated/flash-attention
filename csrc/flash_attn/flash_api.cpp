@@ -792,7 +792,8 @@ mha_bwd(const at::Tensor &dout,  // batch_size x seqlen_q x num_heads, x multipl
         const float softcap,
         const bool deterministic,
         std::optional<at::Generator> gen_,
-        std::optional<at::Tensor> &rng_state) {
+        std::optional<at::Tensor> &rng_state,
+        std::optional<at::Tensor> &block_mask) {
 
     #ifdef FLASHATTENTION_DISABLE_BACKWARD
         TORCH_CHECK(false, "This flash attention build does not support backward.");
@@ -939,6 +940,9 @@ mha_bwd(const at::Tensor &dout,  // batch_size x seqlen_q x num_heads, x multipl
                      deterministic,
                      /*unpadded_lse*/false);
     params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
+    params.block_mask_ptr = static_cast<float*>(block_mask.value().data_ptr());
+    //auto shape = block_mask.value().sizes();
+    //std::cout << "block_mask shape: " << shape << std::endl;
 
     auto launch = &run_mha_bwd;
 

@@ -185,6 +185,9 @@ struct Flash_bwd_params : public Flash_fwd_params {
 
     bool deterministic;
     index_t dq_accum_split_stride;
+
+    // my test of using thread-block mask
+    float *block_mask_ptr;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
