@@ -77,6 +77,17 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// Loads block_mask into shared memory
+inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {
+    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
+    const int tidx = threadIdx.x;
+    const int tid = bid * blockDim.x + tidx;
+    const int thread_offset = int(tid / 32) * 32 + tid % 32;
+    block_mask[tidx] = g_block_mask[thread_offset];
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Is_first, bool Is_last, bool Seq_parallel=false, typename Params>
 inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const int bidb, const int bidh, const int n_block) {
 
@@ -86,6 +97,10 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
 
     // Shared memory.
     extern __shared__ char smem_[];
+
+    // my shared memory test
+    __shared__ float block_mask[32];
+    if (threadIdx.x < 32) load_block_mask(block_mask, params.block_mask_ptr);
 
     // The thread index.
     const int tidx = threadIdx.x;
