@@ -78,7 +78,7 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Loads block_mask into shared memory
-inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {
+inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {return;
     const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
     const int tidx = threadIdx.x;
     const int tid = bid * blockDim.x + tidx;
@@ -467,7 +467,14 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     const float alibi_slope = !Has_alibi || params.alibi_slopes_ptr == nullptr ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
     FLASH_NAMESPACE::Alibi<Is_causal> alibi(alibi_slope, binfo.actual_seqlen_k, binfo.actual_seqlen_q);
 
+    int bm_ind = 0; // block_mask index
+        
     for (; m_block >= m_block_min; --m_block) {
+        // my test
+        //if (bm_ind++ % 2) continue;
+        //if (thread(0, 10)) printf("block mask: ind %d\n", bm_ind++);
+        if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
+        
         Tensor acc_s = partition_fragment_C(tiled_mma_sdp, Shape<Int<kBlockM>, Int<kBlockN>>{});  // (MMA=4, MMA_N, MMA_N)
         clear(acc_s);
         cute::cp_async_wait<0>();
