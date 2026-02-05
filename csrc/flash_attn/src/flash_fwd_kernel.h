@@ -68,6 +68,14 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         printf("Simple write SUCCESS\n");
     }*/
 
+    /*// my
+    if (thread0()) {
+        printf("from flash_fwd_kernel\n");
+        printf("blockDim.x = %d\n", blockDim.x);
+        printf("kBlockM: %d\n", Kernel_traits::kBlockM);
+        printf("kBlockN: %d\n", Kernel_traits::kBlockN);
+    }*/
+
     using Element = typename Kernel_traits::Element;
     using ElementAccum = typename Kernel_traits::ElementAccum;
     using index_t = typename Kernel_traits::index_t;

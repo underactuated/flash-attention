@@ -77,13 +77,22 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+//constexpr int col_size = 16;
+
 // Loads block_mask into shared memory
-inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {return;
+//template <typename Kernel_traits>
+inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {//return;
     const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
     const int tidx = threadIdx.x;
     const int tid = bid * blockDim.x + tidx;
-    const int thread_offset = int(tid / 32) * 32 + tid % 32;
+    const int block_size = blockDim.x;
+    const int thread_offset = int(tid / block_size) * ww_size + tid % block_size;
     block_mask[tidx] = g_block_mask[thread_offset];
+    /*if (thread0()) {
+        printf("blockDim.x = %d\n", blockDim.x);
+        printf("kBlockM: %d\n", Kernel_traits::kBlockM);
+        printf("kBlockN: %d\n", Kernel_traits::kBlockN);
+    }*/
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -99,8 +108,9 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     extern __shared__ char smem_[];
 
     // my shared memory test
-    __shared__ float block_mask[32];
-    if (threadIdx.x < 32) load_block_mask(block_mask, params.block_mask_ptr);
+    __shared__ float block_mask[ww_size];
+    //if (threadIdx.x < ww_size) load_block_mask<Kernel_traits>(block_mask, params.block_mask_ptr);
+    if (threadIdx.x < ww_size) load_block_mask(block_mask, params.block_mask_ptr);
 
     // The thread index.
     const int tidx = threadIdx.x;
@@ -472,8 +482,8 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     for (; m_block >= m_block_min; --m_block) {
         // my test
         //if (bm_ind++ % 2) continue;
-        //if (thread(0, 10)) printf("block mask: ind %d\n", bm_ind++);
-        if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
+        //continue;
+        //if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
         
         Tensor acc_s = partition_fragment_C(tiled_mma_sdp, Shape<Int<kBlockM>, Int<kBlockN>>{});  // (MMA=4, MMA_N, MMA_N)
         clear(acc_s);
