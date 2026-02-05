@@ -481,7 +481,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
         
     for (; m_block >= m_block_min; --m_block) {
         // my test
-        //if (bm_ind++ % 2) continue;
+    if (bm_ind++ % 2) {
         //continue;
         //if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
         
@@ -750,7 +750,46 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
                 }
             }
         }
+    } else {
+        // SHORT LOOP STARTS HERE
 
+        tdQgdQaccum.data() = tdQgdQaccum.data() + (-int(kBlockM * params.h * params.d_rounded));
+
+        if (Double_buffer && m_block > m_block_min) {
+            // Double buffer for sQ
+            const int sQ_offset = m_block % 2 == 0 ? size(sQ) : -size(sQ);
+            tQsQ.data() = tQsQ.data() + sQ_offset;
+            tSsQ.data() = tSsQ.data() + sQ_offset;
+            // Advance gQ
+            tQgQ.data() = tQgQ.data() + (-int(kBlockM * params.q_row_stride));
+        }
+
+        if (m_block > m_block_min) {
+            // Advance gdO
+            tdOgdO.data() = tdOgdO.data() + (-int(kBlockM * params.do_row_stride));
+            if (Is_first) {
+                tdOgO.data() = tdOgO.data() + (-int(kBlockM * params.o_row_stride));
+            }
+        }
+
+        if (m_block > m_block_min) {
+            gLSE.data() = gLSE.data() + (-int(kBlockM));
+            gdPsum.data() = gdPsum.data() + (-int(kBlockM));
+        }
+
+        if (Double_buffer) {  // Double buffer for sQ
+            tdKsQt.data() = tdKsQt.data() + (m_block % 2 == 0 ? size(sQ) : -size(sQ));
+        }
+        if (!Double_buffer && m_block > m_block_min) {
+            // Advance gQ
+            tQgQ.data() = tQgQ.data() + (-int(kBlockM * params.q_row_stride));
+        }
+
+        if (Is_last) {
+            tdQgdQ.data() = tdQgdQ.data() + (-int(kBlockM * params.dq_row_stride));
+        }
+    // SHORT LOOP ENDS HERE
+    }
     }
 
     // Epilogue
