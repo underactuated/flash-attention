@@ -941,6 +941,7 @@ mha_bwd(const at::Tensor &dout,  // batch_size x seqlen_q x num_heads, x multipl
                      /*unpadded_lse*/false);
     params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
     params.block_mask_ptr = static_cast<float*>(block_mask.value().data_ptr());
+    params.store_size = block_mask.value().sizes()[3];
     //auto shape = block_mask.value().sizes();
     //std::cout << "block_mask shape: " << shape << std::endl;
 
