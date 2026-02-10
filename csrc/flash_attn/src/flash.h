@@ -142,6 +142,7 @@ struct Flash_fwd_params : public Qkv_params {
     bool seqlenq_ngroups_swapped;  // q has been transposed from (b, 1, (nheads_kv ngroups), d) to (b, ngroups, nheads_kv, d).
 
     // my test of using global memory
+    int store_size;
     float *d_row_sum;
 };
 

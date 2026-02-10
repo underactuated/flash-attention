@@ -1721,7 +1721,7 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define ww_size 32 * 1 //32 * 8
+//#define ww_size 32 * 1 //32 * 8
             
 #if 1
 template <int kNRows, typename Kernel_traits>
@@ -1738,6 +1738,7 @@ struct StochSparse_simple {
     //static constexpr int kBlockN = Kernel_traits::kBlockN;
 
     ///*
+    const int ww_size;
     //float warp_weights [ww_size];
     int ww_count = 0;
 
@@ -1769,7 +1770,7 @@ public:
 
     decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
 
-    __device__ StochSparse_simple() {
+    __device__ StochSparse_simple(int ww_size_): ww_size(ww_size_) {
         tcaccs = get_tcaccs();
         // 
     };
@@ -2023,11 +2024,13 @@ struct Softmax_c : public Softmax<kNRows> {
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
+    const int store_size;
+
     //StochSparse<kNRows, Kernel_traits> ss;
     //SparseIndexTracker<kNRows> sit;
     //StochSparse_clean<kNRows, Kernel_traits> ss;
     //StochSparse_clean1<kNRows, Kernel_traits> ss;
-    StochSparse_simple<kNRows, Kernel_traits> sss;
+    StochSparse_simple<kNRows, Kernel_traits> sss {store_size};
 
 #if 0
 //-----------------
@@ -2053,7 +2056,7 @@ struct Softmax_c : public Softmax<kNRows> {
 //-----------------
 #endif
 
-    __device__ Softmax_c() {};
+    __device__ Softmax_c(int store_size_): store_size(store_size_) {}
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {

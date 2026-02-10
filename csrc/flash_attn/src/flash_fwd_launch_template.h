@@ -67,10 +67,15 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     const bool return_softmax = params.p_ptr != nullptr;
     #if 1
     ///////////// global memory test ////////////
-    int store_size = 32 * 1; //32 * 32;
+    const int store_size = (params.seqlen_q + Kernel_traits::kBlockN - 1) / Kernel_traits::kBlockN;
+    params.store_size = store_size;
+    //printf("store_size = %d\n", store_size1); fflush(stdout);
+    
+    //int store_size = 32 * 1; //32 * 32;
     static_assert(Kernel_traits::kNThreads == 128);
     size_t total_threads = grid.x * grid.y * grid.z * Kernel_traits::kNThreads;
-    cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
+    cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));//*/
+    
     /*if (params.d_row_sum == nullptr) {
         cudaMalloc(&(params.d_row_sum), total_threads * store_size * sizeof(float));
     }*/

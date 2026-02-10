@@ -79,6 +79,8 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 
 //constexpr int col_size = 16;
 
+constexpr int ww_size = 32;
+
 // Loads block_mask into shared memory
 //template <typename Kernel_traits>
 inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {//return;
@@ -108,6 +110,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     extern __shared__ char smem_[];
 
     // my shared memory test
+    if (thread0()) {printf("bwd params store_size: %d\n", params.store_size);}
     __shared__ float block_mask[ww_size];
     //if (threadIdx.x < ww_size) load_block_mask<Kernel_traits>(block_mask, params.block_mask_ptr);
     if (threadIdx.x < ww_size) load_block_mask(block_mask, params.block_mask_ptr);
