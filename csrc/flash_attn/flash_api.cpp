@@ -509,9 +509,10 @@ mha_fwd(at::Tensor &q,         // batch_size x seqlen_q x num_heads x round_mult
         softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
     }
     ////////////////////////
-    int store_size = 32;
+    //int store_size = 32;
+    //printf("from flash_api: store_size = %d\n", params.store_size);
     //auto my_opts = torch::TensorOptions().device(torch::kCUDA, 0).dtype(torch::kFloat);
-    std::vector<int64_t> shape = {batch_size, num_heads, seqlen_q, store_size};
+    std::vector<int64_t> shape = {batch_size, num_heads, seqlen_q, params.store_size};
     //auto my_data = torch::from_blob(params.d_row_sum, shape, my_opts);
     auto my_data = torch::from_blob(params.d_row_sum, shape, opts.dtype(at::kFloat));
     //auto my_data = torch::empty(shape, opts.dtype(at::kFloat));

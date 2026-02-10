@@ -484,7 +484,8 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
         
     for (; m_block >= m_block_min; --m_block) {
         // my test
-    if (bm_ind++ % 2) {
+    //if (bm_ind++ % 2) {
+    if (0) {
         //continue;
         //if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
         

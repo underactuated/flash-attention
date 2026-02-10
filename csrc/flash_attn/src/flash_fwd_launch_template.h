@@ -68,6 +68,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     #if 1
     ///////////// global memory test ////////////
     const int store_size = (params.seqlen_q + Kernel_traits::kBlockN - 1) / Kernel_traits::kBlockN;
+    //const int store_size = 1;
     params.store_size = store_size;
     //printf("store_size = %d\n", store_size1); fflush(stdout);
     
