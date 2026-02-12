@@ -105,8 +105,8 @@ def _flash_attn_forward(
         return_softmax,
         None,
     )
-    print("hi from _flash_attn_forward")
-    print(my_data.shape)
+    #print("hi from _flash_attn_forward")
+    print("from _flash_attn_forward, my_data:", my_data.shape)
     #my_data = None
     return out, softmax_lse, S_dmask, rng_state, my_data
     return out, softmax_lse, S_dmask, rng_state
