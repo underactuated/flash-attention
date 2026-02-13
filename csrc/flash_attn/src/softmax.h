@@ -1739,7 +1739,6 @@ struct StochSparse_simple {
 
     ///*
     const int ww_size;
-    //const int ww_size = 1;
     //float warp_weights [ww_size];
     int ww_count = 0;
 
@@ -1772,9 +1771,7 @@ public:
     decltype(get_tcaccs()) tcaccs; // = get_tcaccs();
 
     __device__ StochSparse_simple(int ww_size_): ww_size(ww_size_) {
-    //__device__ StochSparse_simple() {
         tcaccs = get_tcaccs();
-        // 
     };
 
     template<typename Tensor0>
@@ -1826,6 +1823,7 @@ public:
         //cute::copy(row_sum, row_sum_tot);
         quad_allreduce_(row_sum_tot, row_sum_tot, sum_op);
         
+        /*
         float curr_max = row_max(0);
         float curr_sum = row_sum_tot(0);
         //float curr_sum = row_sum(0);
@@ -1839,6 +1837,22 @@ public:
         int r = threadIdx.x % 4;
         float log_sum = logf(row_sum_tot(r)) + row_max(r) * softmax_scale;
         s = log_sum;
+        //*/
+
+        /*
+        const int r = threadIdx.x % 4;
+        float s = (r == 0) * (logf(row_sum_tot(0)) + row_max(0) * softmax_scale) +
+        (r == 1) * (logf(row_sum_tot(1)) + row_max(1) * softmax_scale) +
+        (r == 2) * (logf(row_sum_tot(2)) + row_max(2) * softmax_scale) +
+        (r == 3) * (logf(row_sum_tot(3)) + row_max(3) * softmax_scale);
+        */
+
+        const int r = threadIdx.x % 4;
+        float s = 
+                (r == 0 ? logf(row_sum_tot(0)) + row_max(0) * softmax_scale : 0) +
+                (r == 1 ? logf(row_sum_tot(1)) + row_max(1) * softmax_scale : 0) +
+                (r == 2 ? logf(row_sum_tot(2)) + row_max(2) * softmax_scale : 0) +
+                (r == 3 ? logf(row_sum_tot(3)) + row_max(3) * softmax_scale : 0);
 
         for (int th = 0; th < 8; th++) {continue; // comment out continue, to print data
             if (thread(th, PRINT_BID)) {
@@ -2034,7 +2048,6 @@ struct Softmax_c : public Softmax<kNRows> {
     //StochSparse_clean<kNRows, Kernel_traits> ss;
     //StochSparse_clean1<kNRows, Kernel_traits> ss;
     StochSparse_simple<kNRows, Kernel_traits> sss {store_size};
-    //StochSparse_simple<kNRows, Kernel_traits> sss {};
 
 #if 0
 //-----------------
@@ -2061,7 +2074,6 @@ struct Softmax_c : public Softmax<kNRows> {
 #endif
 
     __device__ Softmax_c(int store_size_): store_size(store_size_) {}
-    //__device__ Softmax_c() {}
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
