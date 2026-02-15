@@ -74,7 +74,7 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         printf("blockDim.x = %d\n", blockDim.x);
         printf("kBlockM: %d\n", Kernel_traits::kBlockM);
         printf("kBlockN: %d\n", Kernel_traits::kBlockN);
-    }*/
+    }//*/
 
     using Element = typename Kernel_traits::Element;
     using ElementAccum = typename Kernel_traits::ElementAccum;

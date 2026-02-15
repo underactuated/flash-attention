@@ -79,23 +79,33 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 
 //constexpr int col_size = 16;
 
-constexpr int ww_size = 32;
+//constexpr int ww_size = 32;
 
 // Loads block_mask into shared memory
-//template <typename Kernel_traits>
-inline __device__ void load_block_mask (float* block_mask, float* g_block_mask) {//return;
+inline __device__ void load_block_mask (float* block_mask, float* g_block_mask, const int store_size) {//return;
     const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
     const int tidx = threadIdx.x;
     const int tid = bid * blockDim.x + tidx;
     const int block_size = blockDim.x;
-    const int thread_offset = int(tid / block_size) * ww_size + tid % block_size;
+    //const int thread_offset = int(tid / block_size) * ww_size + tid % block_size;
+    const int thread_offset = int(tid / block_size) * store_size + tid % block_size;
     block_mask[tidx] = g_block_mask[thread_offset];
-    /*if (thread0()) {
-        printf("blockDim.x = %d\n", blockDim.x);
-        printf("kBlockM: %d\n", Kernel_traits::kBlockM);
-        printf("kBlockN: %d\n", Kernel_traits::kBlockN);
-    }*/
 }
+
+// //template <typename Kernel_traits>
+// inline __device__ void load_block_mask_old (float* block_mask, float* g_block_mask) {//return;
+//     const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
+//     const int tidx = threadIdx.x;
+//     const int tid = bid * blockDim.x + tidx;
+//     const int block_size = blockDim.x;
+//     const int thread_offset = int(tid / block_size) * ww_size + tid % block_size;
+//     block_mask[tidx] = g_block_mask[thread_offset];
+//     /*if (thread0()) {
+//         printf("blockDim.x = %d\n", blockDim.x);
+//         printf("kBlockM: %d\n", Kernel_traits::kBlockM);
+//         printf("kBlockN: %d\n", Kernel_traits::kBlockN);
+//     }*/
+// }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -110,10 +120,19 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     extern __shared__ char smem_[];
 
     // my shared memory test
-    if (thread0()) {printf("bwd params store_size: %d\n", params.store_size);}
-    __shared__ float block_mask[ww_size];
-    //if (threadIdx.x < ww_size) load_block_mask<Kernel_traits>(block_mask, params.block_mask_ptr);
-    if (threadIdx.x < ww_size) load_block_mask(block_mask, params.block_mask_ptr);
+    const int store_size = params.store_size;
+    //if (thread0()) {printf("bwd params store_size: %d\n", params.store_size);}
+    if (thread0()) {printf("bwd store_size: %d\n", store_size);}
+    //__shared__ float block_mask[ww_size];
+    __shared__ float block_mask[256];
+    //if (threadIdx.x < ww_size) load_block_mask_old<Kernel_traits>(block_mask, params.block_mask_ptr);
+    //if (threadIdx.x < ww_size) load_block_mask_old(block_mask, params.block_mask_ptr);
+    if (threadIdx.x < store_size) load_block_mask(block_mask, params.block_mask_ptr, store_size);
+    /*if (thread0()) {
+        printf("blockDim.x = %d\n", blockDim.x);
+        printf("kBlockM: %d\n", Kernel_traits::kBlockM);
+        printf("kBlockN: %d\n", Kernel_traits::kBlockN);
+    }*/
 
     // The thread index.
     const int tidx = threadIdx.x;
@@ -485,7 +504,17 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     for (; m_block >= m_block_min; --m_block) {
         // my test
     //if (bm_ind++ % 2) {
-    if (0) {
+    if (bm_ind++ % 10 == 0) {
+    //if (bm_ind++ > 0) {
+    /*bm_ind = min(bm_ind, 255);
+    if (block_mask[bm_ind++] > .5) {*/
+    //if (0) {
+        //bm_ind = min(bm_ind, 255);
+        //const float lm = logf(block_mask[bm_ind - 1]);
+        /*float lm = 1;
+        lm += block_mask[0];
+        #pragma unroll
+        for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }*/
         //continue;
         //if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
         
