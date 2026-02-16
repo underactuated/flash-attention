@@ -908,7 +908,7 @@ def block_mask_for_backward (data):
     #print("data shape:", data.shape)
     shape = list(data.shape)
     shape[2] //= 128
-    block_mask = torch.rand(shape)
+    block_mask = torch.rand(shape).to(data.device);
     #print("block_mask shape:", block_mask.shape)
     return block_mask
 

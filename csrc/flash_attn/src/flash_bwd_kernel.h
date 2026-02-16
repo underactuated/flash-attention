@@ -11,6 +11,8 @@
 #include <cutlass/array.h>
 #include <cutlass/numeric_types.h>
 
+#include <cuda_pipeline_primitives.h>
+
 #include "block_info.h"
 #include "kernel_traits.h"
 #include "utils.h"
@@ -81,16 +83,17 @@ make_tiled_copy_C_warpcontiguousN(Copy_Atom<Args...> const& copy_atom,
 
 //constexpr int ww_size = 32;
 
-// Loads block_mask into shared memory
-inline __device__ void load_block_mask (float* block_mask, float* g_block_mask, const int store_size) {//return;
-    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
-    const int tidx = threadIdx.x;
-    const int tid = bid * blockDim.x + tidx;
-    const int block_size = blockDim.x;
-    //const int thread_offset = int(tid / block_size) * ww_size + tid % block_size;
-    const int thread_offset = int(tid / block_size) * store_size + tid % block_size;
-    block_mask[tidx] = g_block_mask[thread_offset];
-}
+// /*// Loads block_mask into shared memory
+// inline __device__ void load_block_mask (float* block_mask, float* g_block_mask, const int store_size) {//return;
+//     const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
+//     const int tidx = threadIdx.x;
+//     const int tid = bid * blockDim.x + tidx;
+//     const int block_size = blockDim.x;
+//     //const int thread_offset = int(tid / block_size) * ww_size + tid % block_size;
+//     const int thread_offset = int(tid / block_size) * store_size + tid % block_size;
+//     block_mask[tidx] = g_block_mask[thread_offset];
+//     //block_mask[tidx] = logf(tid);
+// }*/
 
 // //template <typename Kernel_traits>
 // inline __device__ void load_block_mask_old (float* block_mask, float* g_block_mask) {//return;
@@ -107,6 +110,14 @@ inline __device__ void load_block_mask (float* block_mask, float* g_block_mask, 
 //     }*/
 // }
 
+// Loads block_mask into shared memory
+inline __device__ void load_block_mask (float* block_mask, float* g_block_mask, const int store_size) {
+    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
+    const int tidx = threadIdx.x;
+    const int thread_offset = bid * store_size + tidx;
+    block_mask[tidx] = g_block_mask[thread_offset];
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_local, bool Has_alibi, bool Is_even_MN, bool Is_even_K, bool Is_softcap, bool Is_first, bool Is_last, bool Seq_parallel=false, typename Params>
@@ -121,6 +132,8 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
 
     // my shared memory test
     const int store_size = params.store_size;
+    //const int store_size = params.store_size / 2;
+    //const int store_size = 256;
     //if (thread0()) {printf("bwd params store_size: %d\n", params.store_size);}
     if (thread0()) {printf("bwd store_size: %d\n", store_size);}
     //__shared__ float block_mask[ww_size];
@@ -128,6 +141,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     //if (threadIdx.x < ww_size) load_block_mask_old<Kernel_traits>(block_mask, params.block_mask_ptr);
     //if (threadIdx.x < ww_size) load_block_mask_old(block_mask, params.block_mask_ptr);
     if (threadIdx.x < store_size) load_block_mask(block_mask, params.block_mask_ptr, store_size);
+    //__syncthreads();
     /*if (thread0()) {
         printf("blockDim.x = %d\n", blockDim.x);
         printf("kBlockM: %d\n", Kernel_traits::kBlockM);
@@ -504,11 +518,17 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     for (; m_block >= m_block_min; --m_block) {
         // my test
     //if (bm_ind++ % 2) {
-    if (bm_ind++ % 10 == 0) {
+    //if (bm_ind++ % 10 == 0) {
+    if (bm_ind++ % 100 == 0) {
     //if (bm_ind++ > 0) {
     /*bm_ind = min(bm_ind, 255);
     if (block_mask[bm_ind++] > .5) {*/
     //if (0) {
+        ///*
+        const float lm = logf(block_mask[bm_ind - 1] + 1e-10);
+        #pragma unroll
+        for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }
+        //*/
         //bm_ind = min(bm_ind, 255);
         //const float lm = logf(block_mask[bm_ind - 1]);
         /*float lm = 1;
@@ -723,6 +743,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
             gLSE.data() = gLSE.data() + (-int(kBlockM));
             #pragma unroll
             for (int mi = 0; mi < size(lse); ++mi) { lse(mi) = gLSE(get<0>(taccScS_row(mi))); }
+            //for (int mi = 0; mi < size(lse); ++mi) { lse(mi) = gLSE(get<0>(taccScS_row(mi))); } // experiment
             gdPsum.data() = gdPsum.data() + (-int(kBlockM));
         }
 
