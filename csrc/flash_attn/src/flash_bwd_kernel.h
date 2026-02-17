@@ -525,10 +525,10 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     //if (block_mask[bm_ind] > .5) {
     //if (0) {
     if (1) {
-        /*
+        ///*
         if (bm_ind < store_size) {
-            //const float lm = logf(block_mask[bm_ind - 1] + 1e-10);
-            const float lm = logf(block_mask[bm_ind] + 1e-10);
+            const float lm = logf(1.);
+            //const float lm = logf(block_mask[bm_ind] + 1e-10);
             #pragma unroll
             for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }
         }

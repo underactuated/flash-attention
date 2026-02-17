@@ -549,7 +549,8 @@ struct LogSumStore {
 // to do: 
 
 template <int kNRows>
-struct Softmax_s : public Softmax<kNRows> {
+//struct Softmax_s : public Softmax<kNRows> {
+struct Softmax_s {
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
@@ -593,6 +594,25 @@ struct Softmax_s : public Softmax<kNRows> {
         }
 
         lss.store(row_max, row_sum, g_log_sum);
+    };
+
+    template<bool Is_dropout=false, bool Split=false, typename Tensor0>
+    __forceinline__ __device__ TensorT normalize_softmax_lse(Tensor0 &acc_o, float softmax_scale, float rp_dropout=1.0) {
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum, row_sum, sum_op);
+        TensorT lse = make_fragment_like(row_sum);
+        Tensor acc_o_rowcol = make_tensor(acc_o.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_o.layout()));
+        static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
+        #pragma unroll
+        for (int mi = 0; mi < size<0>(acc_o_rowcol); ++mi) {
+            float sum = row_sum(mi);
+            float inv_sum = (sum == 0.f || sum != sum) ? 1.f : 1.f / sum;
+            lse(mi) = (sum == 0.f || sum != sum) ? (Split ? -INFINITY : INFINITY) : row_max(mi) * softmax_scale + __logf(sum);
+            float scale = !Is_dropout ? inv_sum : inv_sum * rp_dropout;
+            #pragma unroll
+            for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scale; }
+        }
+        return lse;
     };
 
 };

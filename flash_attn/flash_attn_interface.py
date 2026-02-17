@@ -107,7 +107,11 @@ def _flash_attn_forward(
     )
     #print("hi from _flash_attn_forward")
     print("from _flash_attn_forward, my_data:", my_data.shape)
+    #print("lse norm:", softmax_lse.norm())
+    #print(softmax_lse.isnan().any())
+    #print(softmax_lse.isinf().any())
     #my_data = None
+    #print("shapes:", "out:", out.shape, "S_dmask:", S_dmask.shape, "rng_state:", rng_state.shape, "my_data:", my_data.shape)
     return out, softmax_lse, S_dmask, rng_state, my_data
     return out, softmax_lse, S_dmask, rng_state
 
