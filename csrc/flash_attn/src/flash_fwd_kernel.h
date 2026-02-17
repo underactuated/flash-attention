@@ -359,8 +359,8 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
     clear(acc_o);
 
     //FLASH_NAMESPACE::Softmax<2 * size<1>(acc_o)> softmax;
-    //FLASH_NAMESPACE::Softmax_c<2 * size<1>(acc_o), Kernel_traits> softmax;
-    FLASH_NAMESPACE::Softmax_c<2 * size<1>(acc_o), Kernel_traits> softmax (params.store_size);
+    //FLASH_NAMESPACE::Softmax_e<2 * size<1>(acc_o), Kernel_traits> softmax (params.store_size);
+    FLASH_NAMESPACE::Softmax_s<2 * size<1>(acc_o)> softmax (params.store_size);
 
     const float alibi_slope = !Has_alibi || params.alibi_slopes_ptr == nullptr ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
     FLASH_NAMESPACE::Mask<Is_causal, Is_local, Has_alibi> mask(binfo.actual_seqlen_k, binfo.actual_seqlen_q, params.window_size_left, params.window_size_right, alibi_slope);
@@ -515,7 +515,7 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
 
     // Epilogue
 
-    softmax.ss_final();
+    //softmax.ss_final();
 
     Tensor lse = softmax.template normalize_softmax_lse<Is_dropout>(acc_o, params.scale_softmax, params.rp_dropout);
 

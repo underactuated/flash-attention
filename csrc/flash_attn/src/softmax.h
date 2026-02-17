@@ -358,7 +358,85 @@ public:
 };
 
 #endif
-        
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <int kNRows>
+struct Softmax;
+
+template <int kNRows, typename Kernel_traits>
+struct Softmax_e : public Softmax<kNRows> { // _e = experimental
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_max, row_sum;
+
+    const int store_size;
+    //const int store_size = 1;
+
+    StochSparse_simple<kNRows, Kernel_traits> sss {store_size};
+
+    __device__ Softmax_e(int store_size_): store_size(store_size_) {}
+
+    template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
+    //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
+    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
+        //if (thread(0, PRINT_BID)) printf("softmax_scale_log2 = %f\n", softmax_scale_log2);
+        // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
+        Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
+        static_assert(decltype(size<0>(scores))::value == kNRows);
+        if (Is_first) {
+            FLASH_NAMESPACE::template reduce_max</*zero_init=*/true>(scores, row_max);
+            FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
+            FLASH_NAMESPACE::reduce_sum</*zero_init=*/true>(scores, row_sum);
+            //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/true>(scores, row_sum);
+        } else {
+            Tensor scores_max_prev = make_fragment_like(row_max);
+            cute::copy(row_max, scores_max_prev);
+            FLASH_NAMESPACE::template reduce_max</*zero_init=*/false>(scores, row_max);
+            // Reshape acc_o from (MMA=4, MMA_M, MMA_K) to (nrow=(2, MMA_M), ncol=(2, MMA_K))
+            Tensor acc_o_rowcol = make_tensor(acc_o.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_o.layout()));
+            //if (thread(0, 1)) {printf("acc_o_rowcol:"); print(acc_o_rowcol); printf("\n"); printf("acc_o:"); print(acc_o); printf("\n");}
+            static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
+            #pragma unroll
+            for (int mi = 0; mi < size(row_max); ++mi) {
+                float scores_max_cur = !Check_inf
+                    ? row_max(mi)
+                    : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
+                float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
+                row_sum(mi) *= scores_scale;
+                /*if (thread(0, PRINT_BID)) {
+                    printf("c_bound = %f\n", (row_sum(mi) + 1));
+                    if (mi == 3) printf("\n");
+                }*/
+                #pragma unroll
+                for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scores_scale; }
+                //log_row_sum[count + mi] = row_sum(mi); // exper
+                //ms[count + mi] = row_max(mi); // exper
+            }
+            //sss.analyze_scale_apply_exp2(scores, row_max, softmax_scale_log2);
+            FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
+            // We don't do the reduce across threads here since we don't need to use the row_sum.
+            // We do that reduce at the end when we need to normalize the softmax.
+            FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
+            //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
+            //auto dest_view = make_tensor(log_row_sum + count, make_layout(4));
+            //cute::copy(row_sum, dest_view);
+            //count = (count + mi_max) % store_size; // exper
+        }
+        /*
+        //__syncthreads();
+        //*/
+        //sss.store_wws(row_max, row_sum);
+        //sss.analyze_scores(scores, row_max(0));
+        sss.store_wws(row_max, row_sum, g_row_sum); // uncomment for weight storing
+        //sss.original_coordinates(acc_s);
+    };
+
+    __device__ void ss_final () {
+    };
+
+};
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <int kNRows>
@@ -424,23 +502,66 @@ struct Softmax {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <int kNRows, typename Kernel_traits>
-struct Softmax_c : public Softmax<kNRows> {
+// to do: check if __forceinline__ is needed
+            
+template <int kNRows>
+struct LogSumStore {
+
+    using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
+    TensorT row_sum_tot;
+
+    const int store_size;
+    int store_count = 0;
+
+    const float softmax_scale = 1./8;
+
+    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
+    const int tid = bid * blockDim.x + threadIdx.x;
+    const int thread_offset = int(tid / 32) * 32 * store_size + (tid % 32);
+
+    const int r = threadIdx.x % 4;
+
+    __device__ LogSumStore(int store_size): store_size(store_size) {}
+
+    template <typename Tensor1>
+    __device__ void store (const Tensor1 &row_max, const Tensor1 &row_sum, float* g_log_sum) {
+        
+        Tensor1 row_sum_tot;
+        cute::copy(row_sum, row_sum_tot);
+        SumOp<float> sum_op;
+        quad_allreduce_(row_sum_tot, row_sum_tot, sum_op);
+
+        float log_sum = 
+                (r == 0 ? logf(row_sum_tot(0)) + row_max(0) * softmax_scale : 0) +
+                (r == 1 ? logf(row_sum_tot(1)) + row_max(1) * softmax_scale : 0) +
+                (r == 2 ? logf(row_sum_tot(2)) + row_max(2) * softmax_scale : 0) +
+                (r == 3 ? logf(row_sum_tot(3)) + row_max(3) * softmax_scale : 0);
+
+        if (store_count < store_size) g_log_sum[thread_offset + 32 * store_count] = log_sum;
+        store_count++;
+
+    };
+
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// to do: 
+
+template <int kNRows>
+struct Softmax_s : public Softmax<kNRows> {
 
     using TensorT = decltype(make_tensor<float>(Shape<Int<kNRows>>{}));
     TensorT row_max, row_sum;
 
-    const int store_size;
-    //const int store_size = 1;
+    const int store_size; // optimize later to minimize use of registers
+    LogSumStore<kNRows> lss {store_size};
 
-    StochSparse_simple<kNRows, Kernel_traits> sss {store_size};
-
-    __device__ Softmax_c(int store_size_): store_size(store_size_) {}
+    __device__ Softmax_s(int store_size_): store_size(store_size_) {}
 
     template<bool Is_first, bool Check_inf=false, typename Tensor0, typename Tensor1>
     //__forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2) {
-    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_row_sum) {
-        //if (thread(0, PRINT_BID)) printf("softmax_scale_log2 = %f\n", softmax_scale_log2);
+    __forceinline__ __device__ void softmax_rescale_o(Tensor0 &acc_s, Tensor1 &acc_o, float softmax_scale_log2, float* g_log_sum) {    
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_s.layout()));
         static_assert(decltype(size<0>(scores))::value == kNRows);
@@ -448,14 +569,12 @@ struct Softmax_c : public Softmax<kNRows> {
             FLASH_NAMESPACE::template reduce_max</*zero_init=*/true>(scores, row_max);
             FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
             FLASH_NAMESPACE::reduce_sum</*zero_init=*/true>(scores, row_sum);
-            //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/true>(scores, row_sum);
         } else {
             Tensor scores_max_prev = make_fragment_like(row_max);
             cute::copy(row_max, scores_max_prev);
             FLASH_NAMESPACE::template reduce_max</*zero_init=*/false>(scores, row_max);
             // Reshape acc_o from (MMA=4, MMA_M, MMA_K) to (nrow=(2, MMA_M), ncol=(2, MMA_K))
             Tensor acc_o_rowcol = make_tensor(acc_o.data(), FLASH_NAMESPACE::convert_layout_acc_rowcol(acc_o.layout()));
-            //if (thread(0, 1)) {printf("acc_o_rowcol:"); print(acc_o_rowcol); printf("\n"); printf("acc_o:"); print(acc_o); printf("\n");}
             static_assert(decltype(size<0>(acc_o_rowcol))::value == kNRows);
             #pragma unroll
             for (int mi = 0; mi < size(row_max); ++mi) {
@@ -464,37 +583,18 @@ struct Softmax_c : public Softmax<kNRows> {
                     : (row_max(mi) == -INFINITY ? 0.0f : row_max(mi));
                 float scores_scale = exp2f((scores_max_prev(mi) - scores_max_cur) * softmax_scale_log2);
                 row_sum(mi) *= scores_scale;
-                /*if (thread(0, PRINT_BID)) {
-                    printf("c_bound = %f\n", (row_sum(mi) + 1));
-                    if (mi == 3) printf("\n");
-                }*/
                 #pragma unroll
                 for (int ni = 0; ni < size<1>(acc_o_rowcol); ++ni) { acc_o_rowcol(mi, ni) *= scores_scale; }
-                //log_row_sum[count + mi] = row_sum(mi); // exper
-                //ms[count + mi] = row_max(mi); // exper
             }
-            //sss.analyze_scale_apply_exp2(scores, row_max, softmax_scale_log2);
             FLASH_NAMESPACE::scale_apply_exp2(scores, row_max, softmax_scale_log2);
             // We don't do the reduce across threads here since we don't need to use the row_sum.
             // We do that reduce at the end when we need to normalize the softmax.
             FLASH_NAMESPACE::reduce_sum</*zero_init=*/false>(scores, row_sum);
-            //FLASH_NAMESPACE::reduce_sum_</*zero_init=*/false>(scores, row_sum);
-            //auto dest_view = make_tensor(log_row_sum + count, make_layout(4));
-            //cute::copy(row_sum, dest_view);
-            //count = (count + mi_max) % store_size; // exper
         }
-        /*
-        //__syncthreads();
-        //*/
-        //sss.store_wws(row_max, row_sum);
-        //sss.analyze_scores(scores, row_max(0));
-        sss.store_wws(row_max, row_sum, g_row_sum); // uncomment for weight storing
-        //sss.original_coordinates(acc_s);
+
+        lss.store(row_max, row_sum, g_log_sum);
     };
 
-    __device__ void ss_final () {
-    };
-
-}; 
+};
 
 }  // namespace FLASH_NAMESPACE

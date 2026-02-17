@@ -70,6 +70,7 @@ void run_flash_fwd(Flash_fwd_params &params, cudaStream_t stream) {
     const int store_size = (params.seqlen_q + Kernel_traits::kBlockN - 1) / Kernel_traits::kBlockN;
     //const int store_size = 32; //1;
     params.store_size = store_size;
+    //params.store_size = 0;
     //printf("store_size = %d\n", store_size1); fflush(stdout);
     
     //int store_size = 32 * 1; //32 * 32;

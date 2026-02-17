@@ -513,22 +513,27 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     const float alibi_slope = !Has_alibi || params.alibi_slopes_ptr == nullptr ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
     FLASH_NAMESPACE::Alibi<Is_causal> alibi(alibi_slope, binfo.actual_seqlen_k, binfo.actual_seqlen_q);
 
-    int bm_ind = 0; // block_mask index
+    int bm_ind = -1; // block_mask index
         
     for (; m_block >= m_block_min; --m_block) {
         // my test
+        bm_ind++;
     //if (bm_ind++ % 2) {
     //if (bm_ind++ % 10 == 0) {
-    if (bm_ind++ % 100 == 0) {
+    //if (bm_ind++ % 100 == 0) {
     //if (bm_ind++ > 0) {
-    /*bm_ind = min(bm_ind, 255);
-    if (block_mask[bm_ind++] > .5) {*/
+    //if (block_mask[bm_ind] > .5) {
     //if (0) {
-        ///*
-        const float lm = logf(block_mask[bm_ind - 1] + 1e-10);
-        #pragma unroll
-        for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }
+    if (1) {
+        /*
+        if (bm_ind < store_size) {
+            //const float lm = logf(block_mask[bm_ind - 1] + 1e-10);
+            const float lm = logf(block_mask[bm_ind] + 1e-10);
+            #pragma unroll
+            for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }
+        }
         //*/
+        
         //bm_ind = min(bm_ind, 255);
         //const float lm = logf(block_mask[bm_ind - 1]);
         /*float lm = 1;
