@@ -513,6 +513,11 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     const float alibi_slope = !Has_alibi || params.alibi_slopes_ptr == nullptr ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
     FLASH_NAMESPACE::Alibi<Is_causal> alibi(alibi_slope, binfo.actual_seqlen_k, binfo.actual_seqlen_q);
 
+    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
+    if (bid < -33 && threadIdx.x == 0) {
+        printf("bid = %d, m_block_min = %d, m_block_max = %d %d\n", bid, m_block_min, m_block_max, m_block);
+    }
+
     int bm_ind = -1; // block_mask index
         
     for (; m_block >= m_block_min; --m_block) {
@@ -536,10 +541,11 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
         
         //bm_ind = min(bm_ind, 255);
         //const float lm = logf(block_mask[bm_ind - 1]);
-        /*float lm = 1;
-        lm += block_mask[0];
+        /*
+        float lm = logf(2.);
+        //lm += block_mask[0];
         #pragma unroll
-        for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }*/
+        for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }//*/
         //continue;
         //if (thread(0, 10)) printf("block mask: ind %d val %f\n", bm_ind, block_mask[bm_ind++]);
         

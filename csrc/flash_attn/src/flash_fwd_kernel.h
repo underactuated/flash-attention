@@ -457,6 +457,11 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         }
     }
 
+    const int bid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y;
+    if (bid < -33 && threadIdx.x == 0) {
+        printf("bid = %d, n_block_min = %d, n_block_max = %d %d\n", bid, n_block_min, n_block_max, n_block);
+    }
+
     // These are the iterations where we don't need masking on S
     for (; n_block >= n_block_min; --n_block) {
         Tensor acc_s = partition_fragment_C(tiled_mma, Shape<Int<kBlockM>, Int<kBlockN>>{});  // (MMA=4, MMA_M, MMA_N)
