@@ -538,6 +538,10 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
             for (int mi = 0; mi < size(lse); ++mi) { lse(mi) += lm; }
         }
         //*/
+
+        // if (bid < 5 && threadIdx.x == 0) {
+        //     printf("bid = %d, m_block = %d, lse0 = %f, lse1 = %f, lse2 = %f\n", bid, m_block, lse(0), lse(1), lse(2));
+        // }
         
         //bm_ind = min(bm_ind, 255);
         //const float lm = logf(block_mask[bm_ind - 1]);
